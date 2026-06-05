@@ -203,6 +203,39 @@ prefix() {
 ########################################################
 
 
+entry() {
+    if [ "$(date +%Y)" != "2026" ]; then
+        echo "entry: only works in 2026, update the function for the new year." >&2
+        return 1
+    fi
+
+    local everything_dir="$HOME/Main/Everything"
+    local env_id="wsl"
+
+    local last_id
+    last_id=$(ls "$everything_dir" | grep -E "^[0-9]+-${env_id}$" | sort | tail -1 | sed "s/-${env_id}$//")
+    local next_id=$(( ${last_id:-260000} + 1 ))
+
+    if [ -z "$1" ]; then
+        echo "Usage: entry <name>" >&2
+        return 1
+    fi
+
+    local name_slug
+    name_slug=$(echo "$1" | tr '[:upper:]' '[:lower:]' | tr ' ' '_')
+
+    local dir_name="${next_id}-${env_id}"
+    mkdir -p "$everything_dir/$dir_name"
+    touch "$everything_dir/${dir_name}_${name_slug}.md"
+
+    cd "$everything_dir/$dir_name"
+    echo "Created $dir_name — $1"
+}
+
+
+########################################################
+
+
 
 
 ################## Cut copy and paste functions ########

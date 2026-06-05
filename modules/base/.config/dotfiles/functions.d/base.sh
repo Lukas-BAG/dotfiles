@@ -236,6 +236,18 @@ entry() {
 ########################################################
 
 
+sshAddKey() {
+    [ -f ~/.ssh/id_ed25519 ] || { echo "sshAddKey: key not found at ~/.ssh/id_ed25519" >&2; return 1; }
+    ssh-add -l &>/dev/null; [ $? -eq 2 ] && eval "$(ssh-agent -s)"
+    local fingerprint
+    fingerprint=$(ssh-keygen -lf ~/.ssh/id_ed25519 | awk '{print $2}')
+    ssh-add -l | grep -qF "$fingerprint" || ssh-add ~/.ssh/id_ed25519
+}
+
+
+########################################################
+
+
 
 
 ################## Cut copy and paste functions ########

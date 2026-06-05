@@ -31,6 +31,7 @@ packages=(
   fzf
   copyq
   trash-cli
+  jq
 )
 
 sudo apt -y install "${packages[@]}"

@@ -27,3 +27,5 @@ alias lsb="lsblk -f"
 alias show_file_sizes="du -h --max-depth=1 | sort -h -r"
 alias myrsync="rsync -av --info=progress2"
 
+alias sshAddKey='[ -z "$SSH_AUTH_SOCK" ] && eval "$(ssh-agent -s)"; ssh-add ~/.ssh/id_ed'
+

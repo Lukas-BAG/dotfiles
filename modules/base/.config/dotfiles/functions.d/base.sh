@@ -238,10 +238,32 @@ entry() {
 
 sshAddKey() {
     [ -f ~/.ssh/id_ed25519 ] || { echo "sshAddKey: key not found at ~/.ssh/id_ed25519" >&2; return 1; }
-    ssh-add -l &>/dev/null; [ $? -eq 2 ] && eval "$(ssh-agent -s)"
+    ssh-add -l >/dev/null 2>&1; [ $? -eq 2 ] && eval "$(ssh-agent -s)"
     local fingerprint
     fingerprint=$(ssh-keygen -lf ~/.ssh/id_ed25519 | awk '{print $2}')
     ssh-add -l | grep -qF "$fingerprint" || ssh-add ~/.ssh/id_ed25519
+}
+
+
+########################################################
+
+
+getClaudeSettings() {
+    local target=".claude/settings.json"
+    local raw_url="https://raw.githubusercontent.com/Lukas-BAG/claudeSettings/main/.claude/settings.json"
+
+    if [ -f "$target" ]; then
+        echo "getClaudeSettings: $target already exists, aborting." >&2
+        return 1
+    fi
+
+    mkdir -p ".claude"
+    if ! curl -fsSL "$raw_url" -o "$target"; then
+        echo "getClaudeSettings: failed to fetch settings from GitHub." >&2
+        return 1
+    fi
+
+    echo "getClaudeSettings: wrote $target"
 }
 
 

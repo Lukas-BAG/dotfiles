@@ -1,8 +1,8 @@
 # This is Git's per-user configuration file.
 [user]
 # Please adapt and uncomment the following lines:
-	name = Beinmann
-	email = Beinmann@proton.me
+	name = Lukas-BAG
+	email = lukas.gruender@brockhaus-ag.de
 
 [credential]
 	helper = cache --timeout 21600

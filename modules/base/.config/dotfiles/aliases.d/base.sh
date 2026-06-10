@@ -26,5 +26,6 @@ alias lightMode="gsettings set org.gnome.desktop.interface color-scheme 'default
 alias lsb="lsblk -f"
 alias show_file_sizes="du -h --max-depth=1 | sort -h -r"
 alias myrsync="rsync -av --info=progress2"
+alias pane-recolor="sh ~/Main/Scripts/Tmux/tmux-pane-color.sh"
 
 

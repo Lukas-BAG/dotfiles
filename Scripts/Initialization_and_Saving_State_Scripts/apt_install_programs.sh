@@ -32,6 +32,8 @@ packages=(
   copyq
   trash-cli
   jq
+  pandoc
+  inotify-tools
 )
 
 sudo apt -y install "${packages[@]}"

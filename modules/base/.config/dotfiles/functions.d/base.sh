@@ -270,15 +270,58 @@ getClaudeSettings() {
 ########################################################
 
 
-# Render a markdown file (with Mermaid diagrams) in the Windows browser
+# Render a markdown file (with Mermaid diagrams) in the Windows browser.
+# With -w/--watch, regenerates on file change and auto-refreshes the browser.
 mdview() {
-  local src html
-  src=$(realpath "$1")
+  local src html watch=false
+
+  for arg in "$@"; do
+    case "$arg" in
+      -w|--watch) watch=true ;;
+      -*) echo "mdview: unknown option $arg" >&2; return 1 ;;
+      *) src="$arg" ;;
+    esac
+  done
+
+  if [[ -z "$src" ]]; then
+    echo "Usage: mdview [-w|--watch] <file.md>" >&2
+    return 1
+  fi
+
+  src=$(realpath "$src")
   html=$(mktemp --suffix=.html)
-  pandoc "$src" --from=gfm --to=html5 --standalone \
-    --metadata title="$(basename "$src" .md)" -o "$html"
-  sed -i 's|</body>|<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script><script>document.querySelectorAll("pre.mermaid").forEach(el=>{const d=document.createElement("div");d.className="mermaid";d.textContent=el.textContent;el.replaceWith(d)});mermaid.initialize({startOnLoad:true});</script></body>|' "$html"
+
+  _mdview_render() {
+    pandoc "$src" --from=gfm --to=html5 --standalone \
+      --metadata title="$(basename "$src" .md)" -o "$html"
+    local inject='<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script><script>document.querySelectorAll("pre.mermaid").forEach(el=>{const d=document.createElement("div");d.className="mermaid";d.textContent=el.textContent;el.replaceWith(d)});mermaid.initialize({startOnLoad:true});</script>'
+    if $watch; then
+      inject+='<script>setTimeout(()=>location.reload(true),2000)</script>'
+    fi
+    sed -i "s|</body>|${inject}</body>|" "$html"
+  }
+
+  _mdview_render
   explorer.exe "$(wslpath -w "$html")"
+
+  if $watch; then
+    echo "mdview: watching $(basename "$src") — Ctrl+C to stop"
+    if command -v inotifywait &>/dev/null; then
+      while inotifywait -qq -e close_write,moved_to "$src" 2>/dev/null; do
+        _mdview_render
+      done
+    else
+      local prev curr
+      prev=$(stat -c %Y "$src")
+      while sleep 1; do
+        curr=$(stat -c %Y "$src")
+        if [[ "$curr" != "$prev" ]]; then
+          prev=$curr
+          _mdview_render
+        fi
+      done
+    fi
+  fi
 }
 
 

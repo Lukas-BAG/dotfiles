@@ -273,7 +273,7 @@ getClaudeSettings() {
 # Render a markdown file (with Mermaid diagrams) in the Windows browser.
 # With -w/--watch, regenerates on file change and auto-refreshes the browser.
 mdview() {
-  local src html watch=false
+  local src html watch=false port srv_pid port_file
 
   for arg in "$@"; do
     case "$arg" in
@@ -296,16 +296,80 @@ mdview() {
       --metadata title="$(basename "$src" .md)" -o "$html"
     local inject='<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script><script>document.querySelectorAll("pre.mermaid").forEach(el=>{const d=document.createElement("div");d.className="mermaid";d.textContent=el.textContent;el.replaceWith(d)});mermaid.initialize({startOnLoad:true});</script>'
     if $watch; then
-      inject+='<script>setTimeout(()=>location.reload(true),2000)</script>'
+      inject+="<script>new EventSource('http://localhost:${port}/events').onmessage=()=>location.reload(true)</script>"
     fi
     sed -i "s|</body>|${inject}</body>|" "$html"
   }
 
-  _mdview_render
-  explorer.exe "$(wslpath -w "$html")"
-
   if $watch; then
-    echo "mdview: watching $(basename "$src") — Ctrl+C to stop"
+    port_file=$(mktemp)
+    python3 - "$html" "$port_file" >/dev/null 2>&1 <<'PYEOF' &
+import sys,os,time,threading,socket,http.server
+html=sys.argv[1];pf=sys.argv[2]
+s=socket.socket();s.bind(('127.0.0.1',0));port=s.getsockname()[1];s.close()
+clients=[];lock=threading.Lock()
+def watcher():
+ try:mt=os.path.getmtime(html)
+ except:mt=0
+ while True:
+  time.sleep(0.3)
+  try:
+   t=os.path.getmtime(html)
+   if t!=mt:
+    mt=t
+    with lock:
+     for q in clients[:]:q.append(1)
+  except:pass
+class H(http.server.BaseHTTPRequestHandler):
+ def log_message(self,*a):pass
+ def do_GET(self):
+  if self.path=='/events':
+   self.send_response(200)
+   self.send_header('Content-Type','text/event-stream')
+   self.send_header('Cache-Control','no-cache')
+   self.end_headers()
+   q=[]
+   with lock:clients.append(q)
+   try:
+    while True:
+     if q:q.pop();self.wfile.write(b'data:r\n\n');self.wfile.flush()
+     time.sleep(0.1)
+   except:
+    with lock:
+     if q in clients:clients.remove(q)
+  else:
+   try:
+    d=open(html,'rb').read()
+    self.send_response(200);self.send_header('Content-Type','text/html');self.send_header('Content-Length',len(d));self.end_headers();self.wfile.write(d)
+   except:self.send_response(404);self.end_headers()
+threading.Thread(target=watcher,daemon=True).start()
+srv=http.server.HTTPServer(('127.0.0.1',port),H)
+open(pf,'w').write(str(port))
+srv.serve_forever()
+PYEOF
+    srv_pid=$!
+
+    local i
+    for i in $(seq 20); do
+      sleep 0.1
+      port=$(cat "$port_file" 2>/dev/null)
+      [[ -n "$port" ]] && break
+    done
+    rm -f "$port_file"
+
+    if [[ -z "$port" ]]; then
+      echo "mdview: failed to start preview server" >&2
+      kill "$srv_pid" 2>/dev/null
+      rm -f "$html"
+      return 1
+    fi
+
+    _mdview_render
+    explorer.exe "http://localhost:$port"
+    echo "mdview: watching $(basename "$src") at http://localhost:$port — Ctrl+C to stop"
+
+    trap "kill $srv_pid 2>/dev/null; rm -f $html; trap - INT" INT
+
     if command -v inotifywait &>/dev/null; then
       while inotifywait -qq -e close_write,moved_to "$src" 2>/dev/null; do
         _mdview_render
@@ -321,6 +385,13 @@ mdview() {
         fi
       done
     fi
+
+    kill "$srv_pid" 2>/dev/null
+    rm -f "$html"
+    trap - INT
+  else
+    _mdview_render
+    explorer.exe "$(wslpath -w "$html")"
   fi
 }
 

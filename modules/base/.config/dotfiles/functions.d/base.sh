@@ -292,19 +292,22 @@ mdview() {
   html=$(mktemp --suffix=.html)
 
   _mdview_render() {
+    local tmp
+    tmp=$(mktemp --suffix=.html)
     pandoc "$src" --from=gfm --to=html5 --standalone \
-      --metadata title="$(basename "$src" .md)" -o "$html"
+      --metadata title="$(basename "$src" .md)" -o "$tmp"
     local inject='<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script><script>document.querySelectorAll("pre.mermaid").forEach(el=>{const d=document.createElement("div");d.className="mermaid";d.textContent=el.textContent;el.replaceWith(d)});mermaid.initialize({startOnLoad:true});</script>'
     if $watch; then
       inject+="<script>new EventSource('http://localhost:${port}/events').onmessage=()=>location.reload(true)</script>"
     fi
-    sed -i "s|</body>|${inject}</body>|" "$html"
+    sed -i "s|</body>|${inject}</body>|" "$tmp"
+    mv "$tmp" "$html"
   }
 
   if $watch; then
     port_file=$(mktemp)
     python3 - "$html" "$port_file" >/dev/null 2>&1 <<'PYEOF' &
-import sys,os,time,threading,socket,http.server
+import sys,os,time,threading,socket,http.server,socketserver
 html=sys.argv[1];pf=sys.argv[2]
 s=socket.socket();s.bind(('127.0.0.1',0));port=s.getsockname()[1];s.close()
 clients=[];lock=threading.Lock()
@@ -332,8 +335,9 @@ class H(http.server.BaseHTTPRequestHandler):
    with lock:clients.append(q)
    try:
     while True:
-     if q:q.pop();self.wfile.write(b'data:r\n\n');self.wfile.flush()
-     time.sleep(0.1)
+     if q:del q[:];self.wfile.write(b'data:r\n\n')
+     else:self.wfile.write(b':k\n\n')
+     self.wfile.flush();time.sleep(0.5)
    except:
     with lock:
      if q in clients:clients.remove(q)
@@ -342,8 +346,9 @@ class H(http.server.BaseHTTPRequestHandler):
     d=open(html,'rb').read()
     self.send_response(200);self.send_header('Content-Type','text/html');self.send_header('Content-Length',len(d));self.end_headers();self.wfile.write(d)
    except:self.send_response(404);self.end_headers()
+class TS(socketserver.ThreadingMixIn,http.server.HTTPServer):daemon_threads=True
 threading.Thread(target=watcher,daemon=True).start()
-srv=http.server.HTTPServer(('127.0.0.1',port),H)
+srv=TS(('127.0.0.1',port),H)
 open(pf,'w').write(str(port))
 srv.serve_forever()
 PYEOF

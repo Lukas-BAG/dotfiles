@@ -270,6 +270,19 @@ getClaudeSettings() {
 ########################################################
 
 
+# Render a markdown file (with Mermaid diagrams) in the Windows browser
+mdview() {
+  local src html
+  src=$(realpath "$1")
+  html=$(mktemp --suffix=.html)
+  pandoc "$src" --from=gfm --to=html5 --standalone \
+    --metadata title="$(basename "$src" .md)" -o "$html"
+  sed -i 's|</body>|<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script><script>document.querySelectorAll("pre.mermaid").forEach(el=>{const d=document.createElement("div");d.className="mermaid";d.textContent=el.textContent;el.replaceWith(d)});mermaid.initialize({startOnLoad:true});</script></body>|' "$html"
+  explorer.exe "$(wslpath -w "$html")"
+}
+
+
+########################################################
 
 
 ################## Cut copy and paste functions ########

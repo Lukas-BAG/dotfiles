@@ -2,7 +2,7 @@
 [user]
 # Please adapt and uncomment the following lines:
 	name = Lukas-BAG
-	email = lukas.gruender@brockhaus-ag.de
+	email = lgruender@brockhaus-ag.de
 
 [credential]
 	helper = cache --timeout 21600
@@ -18,6 +18,11 @@
 [alias]
 	mylog = log --oneline -n 5
 [credential "https://github.com"]
-	username = Beinmann
+	username = Lukas-BAG
+	helper = 
+	helper = !/usr/bin/gh auth git-credential
 [include]
 	path = ~/.config/dotfiles/system_local/gitconfig
+[credential "https://gist.github.com"]
+	helper = 
+	helper = !/usr/bin/gh auth git-credential

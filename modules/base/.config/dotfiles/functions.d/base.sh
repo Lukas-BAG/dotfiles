@@ -200,6 +200,32 @@ prefix() {
     mv -i "$1" "$2$1"
 }
 
+# Show current dir's contents sorted by size (human readable).
+# If an entry has a sidecar note file named "<entry>_<something>.md",
+# show that note's name (minus .md) instead of the raw entry name.
+duh() {
+    du -h --max-depth=1 |
+    sort -hr |
+    while IFS=$'\t' read -r size path; do
+        prefix=${path#./}
+
+        if [ "$prefix" = "." ]; then
+            printf '%s\t%s\n' "$size" "$path"
+            continue
+        fi
+
+        sidecar=$(find . -maxdepth 1 -type f -name "${prefix}_*.md" -print -quit)
+
+        if [ -n "$sidecar" ]; then
+            name=${sidecar#./}
+            name=${name%.md}
+            printf '%s\t%s\n' "$size" "$name"
+        else
+            printf '%s\t%s\n' "$size" "$prefix"
+        fi
+    done
+}
+
 ########################################################
 
 

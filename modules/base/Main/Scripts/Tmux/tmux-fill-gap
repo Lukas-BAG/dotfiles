@@ -1,0 +1,19 @@
+#!/bin/bash
+# Moves the given window to the lowest available index, filling gaps left by closed windows.
+# Called by tmux after-new-window and after-break-pane hooks.
+new_win="$1"
+
+other_windows=$(tmux list-windows -F '#{window_index}' | grep -v "^${new_win}$" | sort -n)
+
+gap=1
+for w in $other_windows; do
+    if [ "$w" -eq "$gap" ]; then
+        gap=$((gap + 1))
+    elif [ "$w" -gt "$gap" ]; then
+        break
+    fi
+done
+
+if [ "$new_win" -ne "$gap" ]; then
+    tmux move-window -s "$new_win" -t "$gap"
+fi

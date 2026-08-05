@@ -29,5 +29,3 @@ alias myrsync="rsync -av --info=progress2"
 alias pane-recolor="sh ~/Main/Scripts/Tmux/tmux-pane-color.sh"
 alias lsg="ls | grep -i $1"
 alias claude-box="ssh -p 2222 root@127.0.0.1"
-
-

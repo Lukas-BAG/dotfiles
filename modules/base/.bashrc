@@ -27,3 +27,6 @@ export PATH="$PATH:~/bin"
 export PATH="$PATH:$HOME/Main/Tools/decker"
 export PATH=$PATH:/sbin:/usr/sbin
 
+
+# opencode
+export PATH=/home/user1/.opencode/bin:$PATH

@@ -26,26 +26,42 @@ git submodule update --init --recursive
 
 This pulls in the nvim config, RAM monitor script, and i3blocks-contrib scripts.
 
-### Resolve conflicts first
+### Guided setup (recommended)
 
-Stow creates symlinks from this repo into your home directory. If files like `~/.bashrc` or `~/.profile` already exist (as they do on a fresh Debian/Ubuntu install), stow will refuse to overwrite them. You need to **remove or back up any conflicting files before stowing**.
+```bash
+python3 interactive_setup.py
+```
 
-Common conflicts to check:
-- `~/.bashrc`
-- `~/.bash_profile`
-- `~/.profile`
+This walks you through selecting modules (defaulting to `.module_list_template`'s
+suggestions), writes `.module_list` for you, runs a `stow --simulate` dry run
+to detect any pre-existing files that would conflict (e.g. `~/.bashrc` on a
+fresh Debian/Ubuntu install), and lets you either move the exact conflicting
+files to `dotfilesv3/backups/<timestamp>/` (non-destructive, default) or
+delete them (requires typing `DELETE` to confirm). It only ever touches the
+exact paths `stow` itself reports as conflicting — never a directory, never a
+glob. Once conflicts are resolved it runs the real stow setup for you.
 
-### Configure which modules to activate
+### Manual setup
 
-Copy the template module list and edit it for your machine:
+If you'd rather do it by hand:
+
+**Resolve conflicts first.** Stow creates symlinks from this repo into your
+home directory. If files like `~/.bashrc` or `~/.profile` already exist, stow
+will refuse to overwrite them. You need to **remove or back up any
+conflicting files before stowing**. Common conflicts to check: `~/.bashrc`,
+`~/.bash_profile`, `~/.profile`.
+
+**Configure which modules to activate.** Copy the template module list and
+edit it for your machine:
 
 ```bash
 cp .module_list_template .module_list
 ```
 
-The `.module_list` file is gitignored — it's per-machine. Uncomment or add the modules you want. See the Modules section below.
+The `.module_list` file is gitignored — it's per-machine. Uncomment or add
+the modules you want. See the Modules section below.
 
-### Stow
+**Stow:**
 
 ```bash
 python3 init_or_deinit_stow.py
@@ -107,7 +123,9 @@ dotfilesV3/
 ├── modules/               # one directory per module, stowed to $HOME
 ├── sys_modules/           # modules stowed to / (requires sudo stow)
 ├── Scripts/               # repo-level utility scripts (not stowed)
+├── interactive_setup.py   # guided setup: select modules, resolve conflicts, stow
 ├── init_or_deinit_stow.py # stow helper
+├── backups/               # conflicting files moved aside by interactive_setup.py (gitignored)
 ├── .module_list_template  # template for per-machine module selection
 └── .module_list           # your active modules (gitignored)
 ```

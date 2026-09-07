@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# Interactively pick an SSH key (fuzzy-matched via fzf) to use for a single
+# `git push`. Named `git-push-ssh` so it also works as `git push-ssh` -
+# git resolves unknown subcommands to a `git-<name>` executable on PATH.
+#
+# Usage:
+#   git push-ssh [-d|--default] [-- ] [git push args...]
+#
+#   -d, --default   Also persist the chosen key as this repo's default
+#                   (sets core.sshCommand in the local git config) before
+#                   pushing.
+#
+# If the target remote is https://, it's rewritten to the equivalent SSH
+# form (git@host:path) so the chosen key actually gets used - SSH key
+# selection is a no-op against an https:// remote otherwise, since git
+# falls back to its HTTP credential helper instead. Without -d the
+# rewrite only applies to this one push; with -d the remote's URL is
+# permanently changed via `git remote set-url`.
+set -euo pipefail
+
+prog="git-push-ssh"
+make_default=0
+args=()
+
+for arg in "$@"; do
+    case "$arg" in
+        -d|--default)
+            make_default=1
+            ;;
+        *)
+            args+=("$arg")
+            ;;
+    esac
+done
+
+if [ "$make_default" -eq 1 ] && ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "$prog: not inside a git repository, can't set a default key here" >&2
+    exit 1
+fi
+
+keys=()
+for pub in "$HOME"/.ssh/*.pub; do
+    [ -e "$pub" ] || continue
+    keys+=("${pub%.pub}")
+done
+
+if [ "${#keys[@]}" -eq 0 ]; then
+    echo "$prog: no SSH keys found in $HOME/.ssh (no *.pub files)" >&2
+    exit 1
+fi
+
+selected=$(printf '%s\n' "${keys[@]}" | xargs -n1 basename | fzf --prompt="ssh key for push> ")
+if [ -z "$selected" ]; then
+    echo "$prog: no key selected, aborting" >&2
+    exit 1
+fi
+
+keypath="$HOME/.ssh/$selected"
+ssh_cmd="ssh -i $keypath -o IdentitiesOnly=yes"
+
+# GIT_SSH_COMMAND/core.sshCommand only affect git's own invocations of
+# `ssh` - they're silently ignored against an https:// remote (git falls
+# back to its HTTP credential helper instead, e.g. a browser oauth
+# prompt). If the target remote (first arg, defaulting to origin) is
+# https://, rewrite it to the equivalent SSH form so the chosen key is
+# actually used.
+target_remote="${args[0]:-origin}"
+case "$target_remote" in
+    -*) target_remote="origin" ;;
+esac
+
+if remote_url=$(git remote get-url "$target_remote" 2>/dev/null) \
+    && [[ "$remote_url" =~ ^https://([^/]+)/(.+)$ ]]; then
+    ssh_url="git@${BASH_REMATCH[1]}:${BASH_REMATCH[2]}"
+    echo "$prog: $target_remote is an https:// remote ($remote_url) - rewriting to $ssh_url so the selected key is used" >&2
+    if [ "$make_default" -eq 1 ]; then
+        git remote set-url "$target_remote" "$ssh_url"
+    elif [ "${args[0]:-}" = "$target_remote" ]; then
+        args[0]="$ssh_url"
+    else
+        args=("$ssh_url" "${args[@]}")
+    fi
+fi
+
+if [ "$make_default" -eq 1 ]; then
+    git config core.sshCommand "$ssh_cmd"
+    echo "$prog: set core.sshCommand for this repo to use $selected" >&2
+fi
+
+exec env GIT_SSH_COMMAND="$ssh_cmd" git push "${args[@]}"

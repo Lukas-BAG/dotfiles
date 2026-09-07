@@ -429,6 +429,225 @@ PYEOF
 
 ########################################################
 
+# Quick-create the next numbered location in an "Everything" dir
+# (~/Main/Everything/-style: entries named "<yy><seq>[-<suffix>]" plus a
+# matching empty sidecar file "<entry>_<snake_case_description>[_@tag...].md",
+# see duh() above).
+#
+# Must be run from inside an existing Everything dir. On first use in a given
+# dir it asks once which suffix to use there (can be left blank) and
+# remembers it in a hidden ".mynew-suffix" file in that dir from then on.
+#
+# Usage: mynew "description" [tag ...]
+#   tags may be passed with or without a leading "@" (e.g. "ai" or "@ai").
+mynew() {
+    local suffix_file=".mynew-suffix"
+    local entry_re='^[0-9]{6}(-[A-Za-z0-9]+)?$'
+
+    if [ "$#" -lt 1 ]; then
+        echo "mynew: 1 argument required, description (plus optional tags)" >&2
+        return 1
+    fi
+
+    local description="$1"
+    shift
+
+    local entry max_id=0
+    for entry in */; do
+        entry=${entry%/}
+        if [[ "$entry" =~ $entry_re ]]; then
+            local id=$((10#${entry:0:6}))
+            [ "$id" -gt "$max_id" ] && max_id=$id
+        fi
+    done
+
+    if [ "$max_id" -eq 0 ]; then
+        echo "mynew: no existing <yy><seq>[-suffix] entries found in $(pwd) - this doesn't look like an Everything dir, refusing" >&2
+        return 1
+    fi
+
+    local suffix
+    if [ ! -e "$suffix_file" ]; then
+        echo "mynew: no suffix configured for $(pwd) yet."
+        read -r -p "Suffix to use for new entries here (leave blank for none): " suffix
+        printf '%s' "$suffix" > "$suffix_file"
+    else
+        suffix=$(cat "$suffix_file")
+    fi
+
+    local current_year max_year max_seq next_seq
+    current_year=$(date +%y)
+    max_year=${max_id:0:2}
+    max_seq=$((10#${max_id:2:4}))
+
+    if [ "$max_year" = "$current_year" ]; then
+        next_seq=$((max_seq + 1))
+    else
+        echo "mynew: year prefix rolled over (highest existing entry is '$max_year', current year is '$current_year') - starting sequence over at 0001"
+        next_seq=1
+    fi
+
+    local new_id
+    new_id=$(printf '%s%04d' "$current_year" "$next_seq")
+
+    local new_dirname="$new_id"
+    [ -n "$suffix" ] && new_dirname="${new_id}-${suffix}"
+
+    if [ -e "$new_dirname" ]; then
+        echo "mynew: '$new_dirname' already exists, refusing to touch it" >&2
+        return 1
+    fi
+
+    local snake_description
+    snake_description=$(echo "$description" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/_/g; s/^_+//; s/_+$//')
+
+    local tag_suffix="" tag
+    for tag in "$@"; do
+        tag=${tag#@}
+        tag_suffix="${tag_suffix}_@${tag}"
+    done
+
+    local sidecar="${new_dirname}_${snake_description}${tag_suffix}.md"
+
+    mkdir -- "$new_dirname" &&
+    touch -- "$sidecar" &&
+    cd -- "$new_dirname" &&
+    echo "mynew: created '$new_dirname/' with sidecar '$sidecar'"
+}
+
+
+# Given a path to a "<yy><seq>[-suffix]" entry dir, print the name of its
+# sidecar note file (minus ".md"), or the entry's own dirname if it has none.
+# See duh() above for the same sidecar convention.
+_ge_sidecar_name() {
+    local entry="$1"
+    local base="${entry%/*}"
+    local name="${entry##*/}"
+    [ "$base" = "$entry" ] && base="."
+
+    local sidecar
+    sidecar=$(find "$base" -maxdepth 1 -type f -name "${name}_*.md" -print -quit)
+
+    if [ -n "$sidecar" ]; then
+        sidecar=${sidecar##*/}
+        echo "${sidecar%.md}"
+    else
+        echo "$name"
+    fi
+}
+
+# Shared implementation for ge/gel: find "<yy><seq>[-suffix]" under $3 and cd
+# into it. Errors out if zero or more than one entry matches.
+_ge_goto() {
+    local id="$1" year_arg="$2" base="$3"
+
+    if [ -z "$id" ] || ! [[ "$id" =~ ^[0-9]+$ ]]; then
+        echo "usage: id must be numeric, e.g. 'ge 1'" >&2
+        return 1
+    fi
+
+    local year
+    if [ -n "$year_arg" ]; then
+        if [[ "$year_arg" =~ ^[0-9]{4}$ ]]; then
+            year=${year_arg:2:2}
+        elif [[ "$year_arg" =~ ^[0-9]{2}$ ]]; then
+            year=$year_arg
+        else
+            echo "invalid year '$year_arg' - use e.g. 25 or 2025" >&2
+            return 1
+        fi
+    else
+        year=$(date +%y)
+    fi
+
+    if [ ! -d "$base" ]; then
+        echo "not a dir: $base" >&2
+        return 1
+    fi
+
+    local prefix
+    prefix=$(printf '%s%04d' "$year" "$id")
+
+    local matches=() entry name
+    for entry in "$base"/*/; do
+        entry=${entry%/}
+        name=${entry##*/}
+        [[ "$name" =~ ^${prefix}(-[A-Za-z0-9]+)?$ ]] && matches+=("$entry")
+    done
+
+    case "${#matches[@]}" in
+        0)
+            echo "ge: no entry '$prefix' found in $base" >&2
+            return 1
+            ;;
+        1)
+            cd -- "${matches[0]}"
+            echo "ge: $(_ge_sidecar_name "${matches[0]}")"
+            ;;
+        *)
+            if command -v fzf >/dev/null 2>&1; then
+                local pick entry_display=()
+                for entry in "${matches[@]}"; do
+                    entry_display+=("$(_ge_sidecar_name "$entry")"$'\t'"$entry")
+                done
+                pick=$(printf '%s\n' "${entry_display[@]}" |
+                    fzf --with-nth=1 --delimiter=$'\t' --prompt="ge: multiple matches for '$prefix' > " |
+                    cut -f2)
+                if [ -n "$pick" ]; then
+                    cd -- "$pick"
+                else
+                    echo "ge: no selection made, refusing" >&2
+                    return 1
+                fi
+            else
+                echo "ge: multiple entries match '$prefix' in $base, refusing:" >&2
+                printf '  %s\n' "${matches[@]}" >&2
+                return 1
+            fi
+            ;;
+    esac
+}
+
+# g (bashmarks) + e (Everything): jump to the bashmark "e" (see bashmarks.sh)
+# then cd into the "<yy><seq>[-suffix]" entry matching <id>, defaulting to
+# the current year. Errors out if none or several entries match.
+#
+# Usage: ge <id> [year]
+#   ge 1        -> ~/Main/Everything/<currentyear>0001[-suffix]
+#   ge 1 25     -> .../250001[-suffix]
+#   ge 1 2025   -> .../250001[-suffix]
+ge() {
+    if [ -z "$1" ]; then
+        echo "usage: ge <id> [year]" >&2
+        return 1
+    fi
+
+    local sdirs="${SDIRS:-$HOME/.sdirs}"
+    [ -f "$sdirs" ] && source "$sdirs"
+
+    local target
+    target="$(eval $(echo echo $(echo \$DIR_e)))"
+    if [ ! -d "$target" ]; then
+        echo "ge: bashmark 'e' is not set to a valid dir (set it with: s e)" >&2
+        return 1
+    fi
+
+    _ge_goto "$1" "$2" "$target"
+}
+
+# Same as ge, but searches the current directory instead of jumping to the
+# "e" bashmark first - handy when you're already inside an Everything dir.
+#
+# Usage: gel <id> [year]
+gel() {
+    if [ -z "$1" ]; then
+        echo "usage: gel <id> [year]" >&2
+        return 1
+    fi
+
+    _ge_goto "$1" "$2" "$(pwd)"
+}
+
 
 ################## Cut copy and paste functions ########
 

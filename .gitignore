@@ -1,2 +1,4 @@
 .module_list
 modules/vim/Main/Data/vim/undo
+
+backups/

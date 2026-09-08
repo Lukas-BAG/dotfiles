@@ -10,6 +10,17 @@ A modular dotfiles setup for a Linux desktop running i3. The core idea is that e
 
 ## Setup
 
+### Remote bootstrap (fresh machine, nothing cloned yet)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Beinmann/dotfilesv3/main/bootstrap.sh | bash
+```
+
+Installs `git` if missing, clones this repo into `~/Main/dotfilesv3`, and hands
+off to the guided setup below. Refuses to run if your current directory is
+already inside a git repo (to avoid cloning into the wrong place), and
+refuses to run if `~/Main/dotfilesv3` already exists.
+
 ### Prerequisites
 
 Install required packages (i3, stow, neovim, tilix, rofi, i3blocks, picom, and others):
@@ -32,8 +43,10 @@ This pulls in the nvim config, RAM monitor script, and i3blocks-contrib scripts.
 python3 interactive_setup.py
 ```
 
-This walks you through selecting modules (defaulting to `.module_list_template`'s
-suggestions), writes `.module_list` for you, runs a `stow --simulate` dry run
+This walks you through selecting modules (defaulting to your existing
+`.module_list` selection, or `.module_list_template`'s suggestions if
+`.module_list` doesn't exist yet), writes `.module_list` for you, runs a
+`stow --simulate` dry run
 to detect any pre-existing files that would conflict (e.g. `~/.bashrc` on a
 fresh Debian/Ubuntu install), and lets you either move the exact conflicting
 files to `dotfilesv3/backups/<timestamp>/` (non-destructive, default) or

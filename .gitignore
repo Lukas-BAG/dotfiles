@@ -2,3 +2,4 @@
 modules/vim/Main/Data/vim/undo
 
 backups/
+__pycache__/

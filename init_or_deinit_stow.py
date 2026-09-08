@@ -35,6 +35,20 @@ PERSISTENT_FILES = [
     ("~/.config/dotfiles/system_local", "monitors.sh"),
 ]
 
+# Directories that must never become whole-directory stow symlinks, keyed by
+# the module that owns files inside them. Without this, stow will happily
+# replace the target with a symlink into the module the first time it's
+# stowed and the target doesn't exist yet -- but for a directory like
+# ~/.claude, other (non-dotfiles) tools write their own runtime state into
+# it (session data, caches, etc.), and that state would then end up
+# physically inside the git-tracked module dir. Pre-creating the directory
+# as a real dir forces stow to fold: it links only the individual files the
+# module actually owns (e.g. settings.json) and leaves the rest of the
+# directory alone.
+NON_FOLDING_DIRS = {
+    "ai": ["~/.claude"],
+}
+
 
 class StowHelper:
     def __init__(self):
@@ -48,6 +62,16 @@ class StowHelper:
             if not os.path.exists(filepath):
                 open(filepath, "a").close()
                 print(f"Created persistent file: {filepath}")
+
+    def ensure_non_folding_dirs(self, home_modules):
+        for module in home_modules:
+            for dir_path in NON_FOLDING_DIRS.get(module, []):
+                expanded = os.path.expanduser(dir_path)
+                if os.path.lexists(expanded):
+                    continue
+                os.makedirs(expanded)
+                print(f"Pre-created {expanded} as a real directory so stow folds into it "
+                      f"instead of symlinking the whole thing")
 
     def run_stow(self, target, directory, modules, deinit=False, sudo=False):
         if not modules:
@@ -96,8 +120,11 @@ class StowHelper:
             print("--- Unstowing ---")
             self.stow_all(home_modules, sys_modules, deinit=True)
             print("--- Stowing ---")
+            self.ensure_non_folding_dirs(home_modules)
             self.stow_all(home_modules, sys_modules, deinit=False)
         else:
+            if not self.args.deinit:
+                self.ensure_non_folding_dirs(home_modules)
             self.stow_all(home_modules, sys_modules, deinit=self.args.deinit)
 
 if __name__ == "__main__":

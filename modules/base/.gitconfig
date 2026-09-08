@@ -15,6 +15,8 @@
 	enabled = true
 [commit]
 	verbose = true
+[pull]
+	rebase = true
 [alias]
 	mylog = log --oneline -n 5
 [credential "https://github.com"]

@@ -23,6 +23,9 @@ SYS_MODULES_DIR = "sys_modules"
 BACKUPS_DIR = "backups"
 GITIGNORE_FILE = ".gitignore"
 STOW_HELPER = "init_or_deinit_stow.py"
+INIT_SCRIPTS_DIR = os.path.join("Scripts", "Initialization_and_Saving_State_Scripts")
+APT_INSTALL_SCRIPT = os.path.join(INIT_SCRIPTS_DIR, "apt_install_programs.sh")
+BASHMARKS_SCRIPT = os.path.join(INIT_SCRIPTS_DIR, "init_bashmarks.sh")
 
 # Matches stow's conflict lines, e.g.:
 #   "  * existing target is neither a link nor a directory: .bashrc"
@@ -39,11 +42,13 @@ def discover_modules(directory):
     )
 
 
-def parse_template_defaults():
-    """Active (uncommented) entries in .module_list_template, e.g. {"base", "sys/services"}."""
+def parse_module_defaults():
+    """Active (uncommented) entries in .module_list if it exists, else
+    .module_list_template, e.g. {"base", "sys/services"}."""
+    source = MODULE_LIST_FILE if os.path.isfile(MODULE_LIST_FILE) else MODULE_LIST_TEMPLATE
     defaults = set()
-    if os.path.isfile(MODULE_LIST_TEMPLATE):
-        with open(MODULE_LIST_TEMPLATE) as f:
+    if os.path.isfile(source):
+        with open(source) as f:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith("#"):
@@ -203,9 +208,57 @@ def resolve_conflicts_interactively(conflicts):
         backup_conflicts(conflicts)
 
 
+def install_packages(mode):
+    subprocess.run(["bash", APT_INSTALL_SCRIPT, mode], check=True)
+
+
+def update_submodules():
+    subprocess.run(["git", "submodule", "update", "--init", "--recursive"], check=True)
+
+
+def set_default_bashmarks():
+    subprocess.run(["bash", "-c", f"source {BASHMARKS_SCRIPT}"], check=True)
+
+
+def top_level_prompt():
+    entries = [
+        ("essential", "install necessary packages (git, stow)", False),
+        ("additional", "install additional packages (the rest)", False),
+        ("submodules", "update git submodules (git submodule update --init --recursive)", False),
+        ("bashmarks", "set default bashmarks", False),
+        ("modules", "customize modules", False),
+    ]
+    defaults = {"essential", "submodules", "bashmarks", "modules"}
+
+    print("dotfilesv3 interactive setup")
+    print("============================")
+    print("Select which setup steps to run.")
+
+    return checkbox_prompt(entries, checked=defaults)
+
+
 def main():
     repo_root = os.path.dirname(os.path.abspath(__file__))
     os.chdir(repo_root)
+
+    steps = top_level_prompt()
+
+    if "essential" in steps:
+        print("\nInstalling necessary packages (git, stow)...")
+        install_packages("essential")
+    if "additional" in steps:
+        print("\nInstalling additional packages...")
+        install_packages("additional")
+    if "submodules" in steps:
+        print("\nUpdating git submodules...")
+        update_submodules()
+    if "bashmarks" in steps:
+        print("\nSetting default bashmarks...")
+        set_default_bashmarks()
+
+    if "modules" not in steps:
+        print("\nSkipping module customization.")
+        return
 
     home_module_names = discover_modules(MODULES_DIR)
     sys_module_names = discover_modules(SYS_MODULES_DIR)
@@ -213,17 +266,16 @@ def main():
         print("No modules found under modules/ or sys_modules/, nothing to do.")
         sys.exit(0)
 
-    defaults = parse_template_defaults()
+    defaults = parse_module_defaults()
+    defaults_source = MODULE_LIST_FILE if os.path.isfile(MODULE_LIST_FILE) else MODULE_LIST_TEMPLATE
 
     entries = [(name, name, False) for name in home_module_names]
     if sys_module_names:
         entries.append((None, "sys_modules (require sudo)", True))
         entries += [(f"sys/{name}", f"sys/{name}", False) for name in sys_module_names]
 
-    print("dotfilesv3 interactive setup")
-    print("============================")
-    print("Select which modules to activate on this machine.")
-    print(f"(defaults pre-filled from {MODULE_LIST_TEMPLATE})")
+    print("\nSelect which modules to activate on this machine.")
+    print(f"(defaults pre-filled from {defaults_source})")
 
     selected = checkbox_prompt(entries, checked=defaults)
 

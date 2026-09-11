@@ -1,12 +1,62 @@
 #!/usr/bin/env bash
-# Waits a second (so you can switch to the window you want) then opens
-# flameshot's capture GUI. With an output path argument, saves the capture
-# there directly instead of opening the save dialog.
+# WSL screenshot helper: drives Windows' native Snipping Tool (region select +
+# markup/annotation) and saves the result to a file, since there is no X11
+# desktop under WSL to run a Linux tool like flameshot against.
+#
+# Usage: myScreenshot [output-path]
+#   output-path  file or directory to save to (default: ~/Pictures/Screenshots)
+#
+# Flow:
+#   1. Launches the Windows screen-clip UI (ms-screenclip:) so you can drag
+#      out a region. Windows shows a toast after the drag; click it to open
+#      the Snipping Tool editor and mark it up (pen/highlighter/text/crop) if
+#      you want to comment on the image before saving.
+#   2. Whatever you leave on the Windows clipboard (the raw clip, or the
+#      annotated version if you edited it) gets written to output-path once
+#      you confirm here. This avoids racing the editor's own timing/lifetime,
+#      which varies across Windows builds.
 set -euo pipefail
 
-sleep 1
-if [ -n "${1:-}" ]; then
-    exec flameshot gui -p "$1"
+if ! command -v powershell.exe >/dev/null 2>&1; then
+    echo "myScreenshot: powershell.exe not found - this script requires WSL with Windows interop enabled." >&2
+    exit 1
+fi
+
+target="${1:-$HOME/Pictures/Screenshots/screenshot_$(date +%Y%m%d_%H%M%S).png}"
+
+if [ -d "$target" ] || [ "${target: -1}" = "/" ]; then
+    target="${target%/}/screenshot_$(date +%Y%m%d_%H%M%S).png"
+fi
+
+case "$target" in
+    *.png|*.PNG) : ;;
+    *) target="$target.png" ;;
+esac
+
+mkdir -p "$(dirname "$target")"
+
+win_target="$(wslpath -w "$target")"
+
+powershell.exe -NoProfile -Command "Start-Process 'ms-screenclip:'" >/dev/null
+
+echo "myScreenshot: drag out the region to capture in the Windows snip overlay."
+echo "myScreenshot: click the toast in the bottom-right to annotate before saving, if you want."
+read -rp "myScreenshot: press Enter once the capture (and any markup) is on the clipboard... " _
+
+ps_save='
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+$img = [System.Windows.Forms.Clipboard]::GetImage()
+if ($null -eq $img) {
+    Write-Error "Clipboard does not contain an image - nothing was saved."
+    exit 1
+}
+$img.Save("'"$win_target"'", [System.Drawing.Imaging.ImageFormat]::Png)
+'
+
+if powershell.exe -NoProfile -Command "$ps_save"; then
+    echo "myScreenshot: saved to $target"
 else
-    exec flameshot gui
+    echo "myScreenshot: failed to save - was anything copied to the clipboard?" >&2
+    exit 1
 fi

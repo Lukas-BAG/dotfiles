@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Waits a second (so you can switch to the window you want) then opens
+# flameshot's capture GUI. With an output path argument, saves the capture
+# there directly instead of opening the save dialog.
+set -euo pipefail
+
+sleep 1
+if [ -n "${1:-}" ]; then
+    exec flameshot gui -p "$1"
+else
+    exec flameshot gui
+fi

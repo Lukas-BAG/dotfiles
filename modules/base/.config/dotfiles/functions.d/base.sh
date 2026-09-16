@@ -203,6 +203,12 @@ prefix() {
 # Show current dir's contents sorted by size (human readable).
 # If an entry has a sidecar note file named "<entry>_<something>.md",
 # show that note's name (minus .md) instead of the raw entry name.
+#
+# TODO: only recognizes ".md" sidecars and doesn't handle multiple
+# candidate sidecars for the same entry - unlike _ge_sidecar_name() /
+# _ge_sidecar_candidates() below, which also recognize ".txt" and
+# extensionless sidecars and warn on ambiguity. Bring this in line with
+# that logic instead of duplicating a second, narrower implementation here.
 duh() {
     du -h --max-depth=1 |
     sort -hr |
@@ -432,7 +438,7 @@ PYEOF
 # Quick-create the next numbered location in an "Everything" dir
 # (~/Main/Everything/-style: entries named "<yy><seq>[-<suffix>]" plus a
 # matching empty sidecar file "<entry>_<snake_case_description>[_@tag...].md",
-# see duh() above).
+# see _ge_sidecar_candidates() below for the sidecar-file convention).
 #
 # Must be run from inside an existing Everything dir. On first use in a given
 # dir it asks once which suffix to use there (can be left blank) and
@@ -516,24 +522,87 @@ mynew() {
 }
 
 
+# Recognized sidecar note extensions, in no particular priority (all point at
+# the same entry - see _ge_sidecar_candidates() below).
+_GE_SIDECAR_EXTS=(md txt)
+
+# List (one per line) the sidecar note files for entry "$2" (a dirname, not a
+# path) inside dir "$1". A sidecar is named "<name>_<description>[@tags]",
+# either with one of the extensions in $_GE_SIDECAR_EXTS, or no extension at
+# all. Anything else (e.g. "<name>_notes.pdf") is not considered a sidecar.
+_ge_sidecar_candidates() {
+    local base="$1" name="$2" f base_name ext
+
+    for f in "$base/${name}"_*; do
+        [ -e "$f" ] || continue
+        [ -f "$f" ] || continue
+        base_name=${f##*/}
+
+        if [[ "$base_name" == *.* ]]; then
+            ext=${base_name##*.}
+            local known
+            for known in "${_GE_SIDECAR_EXTS[@]}"; do
+                [ "${ext,,}" = "$known" ] && { printf '%s\n' "$f"; continue 2; }
+            done
+        else
+            printf '%s\n' "$f"
+        fi
+    done
+}
+
+# Strip a recognized sidecar extension (see $_GE_SIDECAR_EXTS) off a filename,
+# if it has one; extensionless sidecars are returned unchanged.
+_ge_strip_sidecar_ext() {
+    local f="$1" ext known
+    [[ "$f" == *.* ]] || { echo "$f"; return; }
+    ext=${f##*.}
+    for known in "${_GE_SIDECAR_EXTS[@]}"; do
+        [ "${ext,,}" = "$known" ] && { echo "${f%.*}"; return; }
+    done
+    echo "$f"
+}
+
 # Given a path to a "<yy><seq>[-suffix]" entry dir, print the name of its
-# sidecar note file (minus ".md"), or the entry's own dirname if it has none.
-# See duh() above for the same sidecar convention.
+# sidecar note file (minus its extension), or the entry's own dirname if it
+# has none. If more than one sidecar file matches (e.g. both a .md and a
+# .txt, or two .txt files), they all point at the same entry - warn on
+# stderr and, if fzf is available, let the user pick which name to display;
+# otherwise (or on no selection) just fall back to the plain dirname.
 _ge_sidecar_name() {
     local entry="$1"
     local base="${entry%/*}"
     local name="${entry##*/}"
     [ "$base" = "$entry" ] && base="."
 
-    local sidecar
-    sidecar=$(find "$base" -maxdepth 1 -type f -name "${name}_*.md" -print -quit)
+    local candidates=() line
+    while IFS= read -r line; do
+        [ -n "$line" ] && candidates+=("$line")
+    done < <(_ge_sidecar_candidates "$base" "$name")
 
-    if [ -n "$sidecar" ]; then
-        sidecar=${sidecar##*/}
-        echo "${sidecar%.md}"
-    else
-        echo "$name"
-    fi
+    case "${#candidates[@]}" in
+        0)
+            echo "$name"
+            ;;
+        1)
+            _ge_strip_sidecar_ext "${candidates[0]##*/}"
+            ;;
+        *)
+            echo "ge: '$name' has multiple sidecar files (all point to the same entry):" >&2
+            printf '  %s\n' "${candidates[@]##*/}" >&2
+            if command -v fzf >/dev/null 2>&1; then
+                local pick
+                pick=$(printf '%s\n' "${candidates[@]##*/}" |
+                    fzf --prompt="ge: pick display name for '$name' > ")
+                if [ -n "$pick" ]; then
+                    _ge_strip_sidecar_ext "$pick"
+                else
+                    echo "$name"
+                fi
+            else
+                echo "$name"
+            fi
+            ;;
+    esac
 }
 
 # Shared "matches -> cd" tail for ge/gel: cd straight in on a single match,
@@ -622,9 +691,13 @@ _ge_goto() {
 
 # String-search variant of _ge_goto: instead of an id, take a substring to
 # grep sidecar filenames for (case-insensitive), under $3. A sidecar is named
-# "<yy><seq>[-suffix]_<description>[@tags].md" (see mynew() above), so the
-# entry dirname is everything before the first "_". cd's straight in on a
-# single match, otherwise offers the same fzf picker as _ge_goto.
+# "<yy><seq>[-suffix]_<description>[@tags]" with a recognized extension (see
+# $_GE_SIDECAR_EXTS) or none at all (see mynew() above and
+# _ge_sidecar_candidates() above), so the entry dirname is everything before
+# the first "_". If an entry has several matching sidecar files they all
+# point at the same dir, so it's only added to the results once. cd's
+# straight in on a single match, otherwise offers the same fzf picker as
+# _ge_goto.
 _ge_goto_string() {
     local label="$1" needle="$2" base="$3"
 
@@ -633,15 +706,33 @@ _ge_goto_string() {
         return 1
     fi
 
-    local matches=() sidecar filename dirname entry
-    for sidecar in "$base"/*_*.md; do
+    local matches=() sidecar filename dirname entry ext known seen_dup
+    for sidecar in "$base"/*_*; do
         [ -e "$sidecar" ] || continue
+        [ -f "$sidecar" ] || continue
         filename=${sidecar##*/}
+
+        if [[ "$filename" == *.* ]]; then
+            ext=${filename##*.}
+            local recognized=0
+            for known in "${_GE_SIDECAR_EXTS[@]}"; do
+                [ "${ext,,}" = "$known" ] && { recognized=1; break; }
+            done
+            [ "$recognized" -eq 1 ] || continue
+        fi
+
         case "${filename,,}" in
             *"${needle,,}"*)
                 dirname=${filename%%_*}
                 entry="$base/$dirname"
-                [ -d "$entry" ] && matches+=("$entry")
+                if [ -d "$entry" ]; then
+                    seen_dup=0
+                    local m
+                    for m in "${matches[@]}"; do
+                        [ "$m" = "$entry" ] && { seen_dup=1; break; }
+                    done
+                    [ "$seen_dup" -eq 0 ] && matches+=("$entry")
+                fi
                 ;;
         esac
     done

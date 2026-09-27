@@ -3,10 +3,13 @@
 Run from the repo root:  python3 -m unittest discover tests/evtools
 """
 
+import argparse
 import contextlib
+import glob
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -1244,6 +1247,74 @@ class NewCommandTest(TreeTest):
 
     def functions(self):
         return os.path.join(REPO, "modules", "base", ".config", "dotfiles", "functions.d", "base.sh")
+
+
+def shell_definitions():
+    """{name: body} of every function and alias in the repo's functions.d/aliases.d."""
+    defs = {}
+    for path in sorted(glob.glob(os.path.join(REPO, "modules", "*", ".config", "*",
+                                              "*.d", "*.sh"))):
+        if os.path.basename(os.path.dirname(path)) not in ("functions.d", "aliases.d"):
+            continue
+        # drop comments, so "see ~/.local/bin/everything" doesn't count as a call
+        with open(path) as f:
+            lines = [re.sub(r"(^|\s)#.*", "", line) for line in f]
+        name = None
+        for line in lines:
+            if name is not None:
+                if line.startswith("}"):
+                    name = None
+                else:
+                    defs[name] += line
+                continue
+            m = re.match(r"alias\s+([^=\s]+)=(.*)", line)
+            if m:
+                defs[m[1]] = m[2]
+                continue
+            m = re.match(r"(?:function\s+)?([\w:.-]+)\s*\(\)\s*\{", line)
+            if m:
+                name = m[1]
+                defs[name] = line[m.end():]
+    return defs
+
+
+def everything_wrappers():
+    """Public shell functions/aliases that call `everything`, directly or via a helper."""
+    defs = shell_definitions()
+    calls = re.compile(r"(?:^|[\s;|&(\"'`])everything\s")
+    wrappers = {n for n, body in defs.items() if calls.search(body)}
+    while True:
+        more = {n for n, body in defs.items() if n not in wrappers and any(
+            re.search(rf"(?:^|[\s;|&(\"'`]){re.escape(w)}(?:\s|$)", body) for w in wrappers)}
+        if not more:
+            break
+        wrappers |= more
+    return {n for n in wrappers if not n.startswith("_")}
+
+
+class HelpCommandTest(unittest.TestCase):
+    def overview_names(self, group):
+        return [name for name, _, _ in cli.OVERVIEW[group][1]]
+
+    def test_prints_every_entry_with_example(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(cli.main(["help"]), 0)
+        for _, items in cli.OVERVIEW:
+            for name, desc, example in items:
+                self.assertRegex(out.getvalue(), rf"(?m)^  {re.escape(name)} +{re.escape(desc)}$")
+                self.assertIn(f"e.g. {example}\n", out.getvalue())
+
+    def test_every_subcommand_listed(self):
+        sub = next(a for a in cli.build_parser()._actions
+                   if isinstance(a, argparse._SubParsersAction))
+        self.assertEqual(sorted(self.overview_names(0)), sorted(sub.choices))
+
+    def test_every_shell_wrapper_listed(self):
+        wrappers = everything_wrappers()
+        # guards the parser above: these must be found, or the check is toothless
+        self.assertLessEqual({"ge", "gel", "cde", "lse", "mynew"}, wrappers)
+        self.assertEqual(sorted(self.overview_names(1)), sorted(wrappers))
 
 
 if __name__ == "__main__":

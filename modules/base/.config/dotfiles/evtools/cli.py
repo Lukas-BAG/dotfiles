@@ -488,6 +488,53 @@ def cmd_new(args: argparse.Namespace) -> int:
     return 0
 
 
+# Hand-written on purpose (ticket 020); a test fails if a subcommand or an
+# Everything wrapper in functions.d/aliases.d is missing here.
+# (group title, [(name, one-line description, example), ...])
+OVERVIEW = [
+    ("`everything` subcommands (everything <command> --help for details)", [
+        ("list", "list every Everything dir with entry count, newest entry, suffixes",
+         "everything list --paths"),
+        ("entries", "list the entries of the Everything dir you're in (-a: all dirs)",
+         "everything entries --size"),
+        ("pick", "print one Everything dir, via text match or fzf",
+         "everything pick archive"),
+        ("goto", "print one entry dir, by id or sidecar text",
+         "everything goto 1 25"),
+        ("stats", "entry, suffix and tag statistics across Everything dirs",
+         "everything stats --per-dir"),
+        ("check", "report naming problems in Everything dirs (exit 1 if any)",
+         "everything check --all-levels"),
+        ("new", "create the next entry dir + sidecar and print its path",
+         "everything new \"some idea\" ai"),
+        ("help", "this overview", "everything help"),
+    ]),
+    ("Shell functions and aliases (functions.d / aliases.d)", [
+        ("ge", "cd to an entry of the \"e\" bashmark dir by id or text (-a: all dirs)",
+         "ge 1 25   ge fire   ge -a fire"),
+        ("gel", "like ge, but searches the current dir", "gel fire"),
+        ("cde", "cd to one Everything dir, via text match or fzf", "cde archive"),
+        ("lse", "alias for `everything entries`", "lse -a"),
+        ("mynew", "create the next entry in the current Everything dir and cd into it",
+         "mynew \"some idea\" ai"),
+    ]),
+]
+
+
+def cmd_help(args: argparse.Namespace) -> int:
+    """Print an overview of every Everything-dir command, CLI and shell."""
+    width = max(len(name) for _, items in OVERVIEW for name, _, _ in items)
+    blocks = []
+    for title, items in OVERVIEW:
+        lines = [title]
+        for name, desc, example in items:
+            lines.append(f"  {name:<{width}}  {desc}")
+            lines.append(f"  {'':<{width}}    e.g. {example}")
+        blocks.append("\n".join(lines))
+    print("\n\n".join(blocks))
+    return 0
+
+
 # searched when --root isn't given (tests point this at a fake tree)
 DEFAULT_ROOT = "/"
 NETWORK_HELP = ("also search network filesystems (nfs, cifs, sshfs, ...); local mounts are "
@@ -495,7 +542,9 @@ NETWORK_HELP = ("also search network filesystems (nfs, cifs, sshfs, ...); local 
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="everything", description=__doc__)
+    parser = argparse.ArgumentParser(prog="everything", description=__doc__,
+                                     epilog="`everything help` also lists the shell functions "
+                                     "and aliases built on it (ge, cde, ...).")
     sub = parser.add_subparsers(dest="command", required=True, metavar="<command>")
 
     p = sub.add_parser("list", help="list every Everything dir (cde picks one)",
@@ -633,6 +682,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dir", default=".", help="the Everything dir (default: current dir)")
     p.add_argument("--label", default="everything new", help=argparse.SUPPRESS)
     p.set_defaults(func=cmd_new)
+
+    p = sub.add_parser("help", help="overview of every Everything-dir command, incl. shell "
+                       "wrappers", description="Print a short overview of the `everything` "
+                       "subcommands and the shell functions/aliases built on them, each "
+                       "with an example.")
+    p.set_defaults(func=cmd_help)
     return parser
 
 

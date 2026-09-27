@@ -92,7 +92,11 @@ def cmd_pick(args: argparse.Namespace) -> int:
     if not matches:
         print(f"{prog}: no Everything dir matching '{args.text}'", file=sys.stderr)
         return 1
-    if needle is not None and len(matches) == 1:
+    if len(matches) == 1:
+        what = f"matching '{args.text}'" if needle else "found"
+        # stderr, so $(everything pick) still only captures the path
+        print(f"{prog}: only one Everything dir {what}, picking it without fzf",
+              file=sys.stderr)
         print(matches[0])
         return 0
 
@@ -137,9 +141,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("pick", help="print one Everything dir, via text match or fzf (used by cde)",
                        description="Print the absolute path of one Everything dir. Without "
-                       "TEXT, pick from all of them with fzf; with TEXT, keep dirs whose "
-                       "path contains it (any case) and print the only match directly, or "
-                       "pick among several with fzf. Read-only; cde wraps this to cd there.")
+                       "TEXT, consider all of them; with TEXT, only dirs whose path "
+                       "contains it (any case). A single candidate is printed directly, "
+                       "several are offered in fzf. Read-only; cde wraps this to cd there.")
     p.add_argument("text", nargs="?", help="case-insensitive substring of the path")
     p.add_argument("--root", default=os.path.expanduser("~"),
                    help="where to search (default: $HOME)")

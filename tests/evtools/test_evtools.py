@@ -194,8 +194,9 @@ class PickCommandTest(TreeTest):
 
     def test_single_text_match_prints_path(self):
         with mock.patch("shutil.which", side_effect=AssertionError("fzf not needed")):
-            rc, out, _ = self.run_cli("pick", "OLD_every")
+            rc, out, err = self.run_cli("pick", "OLD_every")
         self.assertEqual((rc, out), (0, self.p("Archive", "old_everything") + "\n"))
+        self.assertIn("only one Everything dir matching 'OLD_every'", err)
 
     def test_text_matches_whole_path(self):
         rc, out, _ = self.run_cli("pick", "archive")
@@ -228,11 +229,17 @@ class PickCommandTest(TreeTest):
         ])
         self.assertIn("--prompt=multiple matches for 'main' > ", cmd)
 
-    def test_no_text_always_picks_even_single_dir(self):
+    def test_no_text_single_dir_skips_fzf(self):
+        with mock.patch("shutil.which", side_effect=AssertionError("fzf not needed")):
+            rc, out, err = self.run_cli("pick", "--root", self.p("Archive"))
+        self.assertEqual((rc, out), (0, self.p("Archive", "old_everything") + "\n"))
+        self.assertIn("only one Everything dir found", err)
+
+    def test_fzf_cancel_refuses(self):
         with mock.patch("shutil.which", return_value="/usr/bin/fzf"), \
                 mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(
                     [], 130, stdout="")):
-            rc, out, err = self.run_cli("pick", "--root", self.p("Archive"))
+            rc, out, err = self.run_cli("pick")
         self.assertEqual((rc, out), (1, ""))
         self.assertIn("no selection made", err)
 

@@ -7,6 +7,7 @@ import argparse
 MODULE_LIST_FILE = ".module_list"
 MODULES_DIR = "modules"
 SYS_MODULES_DIR = "sys_modules"
+CLAUDE_SETTINGS_SYNC = "sync_claude_settings.py"
 
 
 def parse_args():
@@ -43,8 +44,10 @@ PERSISTENT_FILES = [
 # it (session data, caches, etc.), and that state would then end up
 # physically inside the git-tracked module dir. Pre-creating the directory
 # as a real dir forces stow to fold: it links only the individual files the
-# module actually owns (e.g. settings.json) and leaves the rest of the
-# directory alone.
+# module actually owns and leaves the rest of the directory alone. (The ai
+# module currently owns no files in ~/.claude -- settings.json is merged in
+# by sync_claude_settings.py instead -- but anything added there later must
+# not fold the whole dir.)
 #
 # Same for ~/.config/systemd/user (`systemctl --user enable/edit` writes
 # wants-links and drop-in overrides there) and ~/.local/bin (pip/pipx,
@@ -160,6 +163,20 @@ class StowHelper:
             if not self.args.deinit:
                 self.ensure_non_folding_dirs(home_modules)
             self.stow_all(home_modules, sys_modules, deinit=self.args.deinit)
+
+        if not self.args.deinit and "ai" in home_modules:
+            self.sync_claude_settings()
+
+    def sync_claude_settings(self):
+        # ~/.claude/settings.json isn't stowed (Claude Code writes to it);
+        # the tracked settings get merged into it instead. A failure here
+        # doesn't undo the stow run, so only warn.
+        print("----------------------------------")
+        print(f"Syncing Claude settings ({CLAUDE_SETTINGS_SYNC})")
+        result = subprocess.run([sys.executable, CLAUDE_SETTINGS_SYNC])
+        if result.returncode != 0:
+            print(f"Warning: {CLAUDE_SETTINGS_SYNC} failed (exit {result.returncode}); "
+                  f"stow itself finished. Fix the above and run it again by hand.")
 
 if __name__ == "__main__":
     StowHelper().main()

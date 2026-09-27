@@ -86,6 +86,20 @@ python3 init_or_deinit_stow.py -D   # unstow everything (remove all symlinks)
 python3 init_or_deinit_stow.py -R   # restow (unstow then stow again, useful after moving files)
 ```
 
+**Claude Code settings (`ai` module):** `~/.claude/settings.json` is not
+stowed, because Claude Code writes to it during normal use. The settings
+shared by every machine are tracked in `claude_settings/` and merged into the
+real file by `sync_claude_settings.py`, which the stow helper runs after
+stowing whenever `ai` is selected. Run it by hand after changing the tracked
+settings:
+
+```bash
+python3 sync_claude_settings.py --dry-run   # show what would change
+python3 sync_claude_settings.py             # apply; asks before overriding local values
+```
+
+See `claude_settings/README.md` for how defaults and enforced settings differ.
+
 ---
 
 ## Modules
@@ -98,7 +112,7 @@ python3 init_or_deinit_stow.py -R   # restow (unstow then stow again, useful aft
 | `vim` | Vim configuration for when neovim isn't available. |
 | `scripts` | Miscellaneous helper scripts (RAM monitor etc.) managed as submodules. |
 | `services` | Systemd user services. |
-| `ai` | AI tooling — Claude usage monitor script and shell alias. Opt-in: only activate on machines where you use Claude. |
+| `ai` | AI tooling — Claude usage monitor script, notification hook script and shell alias (Claude settings: see `claude_settings/`). Opt-in: only activate on machines where you use Claude. |
 | `laptop_adaptations` | Laptop-specific tweaks (touchpad natural scrolling, tapping). Opt-in: activate on laptops instead of or alongside `base`. |
 
 ### Module conventions
@@ -138,7 +152,10 @@ dotfilesV3/
 ├── Scripts/               # repo-level utility scripts (not stowed)
 ├── interactive_setup.py   # guided setup: select modules, resolve conflicts, stow
 ├── init_or_deinit_stow.py # stow helper
-├── backups/               # conflicting files moved aside by interactive_setup.py (gitignored)
+├── claude_settings/       # shared Claude Code settings (not stowed)
+├── sync_claude_settings.py # merges claude_settings/ into ~/.claude/settings.json
+├── tests/                 # unittest suites (python3 -m unittest discover tests/<name>)
+├── backups/               # files moved aside by interactive_setup.py, settings backups (gitignored)
 ├── .module_list_template  # template for per-machine module selection
 └── .module_list           # your active modules (gitignored)
 ```

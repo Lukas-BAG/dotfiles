@@ -12,6 +12,8 @@ from dataclasses import dataclass
 
 ENTRY_RE = re.compile(r"^(?P<yy>[0-9]{2})(?P<seq>[0-9]{4})(?:-(?P<suffix>[A-Za-z0-9]+))?$")
 SIDECAR_RE = re.compile(r"^(?P<entry>[0-9]{6}(?:-[A-Za-z0-9]+)?)_(?P<rest>.+)$")
+# a real extension is letters/digits only; in "x_v1.5_@ai" the ".5_@ai" isn't one
+EXT_RE = re.compile(r"\.[A-Za-z0-9]+$")
 
 
 @dataclass(frozen=True)
@@ -47,6 +49,8 @@ def parse_entry(name: str) -> EntryName | None:
 def parse_sidecar(name: str) -> SidecarName | None:
     """Parse a sidecar file name (any extension), or return None if it isn't one."""
     stem, ext = os.path.splitext(name)
+    if ext and not EXT_RE.fullmatch(ext):
+        stem, ext = name, ""
     m = SIDECAR_RE.match(stem)
     if not m:
         return None

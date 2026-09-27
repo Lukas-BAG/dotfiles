@@ -142,6 +142,11 @@ class EntriesTest(TreeTest):
         self.assertEqual((s.entry.name, s.description, s.tags, s.ext),
                          ("260001", "with spaces", (), ".txt"))
         self.assertEqual(entries.parse_sidecar("260001_no_ext").ext, "")
+        # a dot in the name without an extension doesn't swallow the tags
+        s = entries.parse_sidecar("260001-nry_notes_v1.5_@ai")
+        self.assertEqual((s.description, s.tags, s.ext), ("notes_v1.5", ("ai",), ""))
+        s = entries.parse_sidecar("260001-nry_notes_@v1.2.md")
+        self.assertEqual((s.description, s.tags, s.ext), ("notes", ("v1.2",), ".md"))
         for bad in ["260001.md", "260001-nry", "abc_def.md", "26001_x.md"]:
             self.assertIsNone(entries.parse_sidecar(bad), bad)
 

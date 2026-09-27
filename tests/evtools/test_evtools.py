@@ -77,6 +77,17 @@ class DiscoveryTest(TreeTest):
             self.p("Main", "Everything", "250001", "sub-everything"),
         ])
 
+    def test_claude_projects_pruned_at_any_depth(self):
+        archived = self.p("Main", "Everything", "250003-nry", "home")
+        os.makedirs(os.path.join(archived, ".claude", "projects",
+                                 "-home-dev-Main-Everything-250001", "sub-everything"))
+        os.makedirs(os.path.join(archived, "Main", "Everything"))  # empty, still listed
+        os.makedirs(os.path.join(archived, "projects", "everything-kept"))  # not under .claude
+        found = discovery.find_everything_dirs(self.home, self.home)
+        self.assertFalse([d for d in found if "/.claude/projects" in d], found)
+        self.assertIn(os.path.join(archived, "Main", "Everything"), found)
+        self.assertIn(os.path.join(archived, "projects", "everything-kept"), found)
+
     def test_root_itself_can_match(self):
         root = self.p("Main", "Everything")
         self.assertEqual(discovery.find_everything_dirs(root, self.home)[0], root)

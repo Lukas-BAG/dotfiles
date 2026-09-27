@@ -12,11 +12,15 @@ SKIP_NAMES = {".git", "node_modules", ".cache"}
 
 
 def skip_paths(home: str) -> set[str]:
-    # ~/.claude/projects holds one "-home-...-Everything-..." dir per Claude session
-    return {
-        os.path.join(home, ".claude", "projects"),
-        os.path.join(home, ".local", "share", "Trash"),
-    }
+    return {os.path.join(home, ".local", "share", "Trash")}
+
+
+def _pruned(path: str, skip: set[str]) -> bool:
+    name = os.path.basename(path)
+    # <any>/.claude/projects holds one "-home-...-Everything-..." dir per Claude
+    # session, also in archived homes and the dotfiles ai module
+    claude_projects = name == "projects" and os.path.basename(os.path.dirname(path)) == ".claude"
+    return name in SKIP_NAMES or path in skip or claude_projects
 
 
 def is_everything_name(name: str) -> bool:
@@ -40,7 +44,7 @@ def find_everything_dirs(root: str, home: str | None = None) -> list[str]:
     while stack:
         path = stack.pop()
         name = os.path.basename(path) or path
-        if name in SKIP_NAMES or path in skip:
+        if _pruned(path, skip):
             continue
         if is_everything_name(name):
             found.append(path)
@@ -54,8 +58,7 @@ def find_everything_dirs(root: str, home: str | None = None) -> list[str]:
                 if not child.is_dir(follow_symlinks=False):
                     continue
                 if child.stat(follow_symlinks=False).st_dev != root_dev:
-                    if child.name not in SKIP_NAMES and child.path not in skip \
-                            and is_everything_name(child.name):
+                    if not _pruned(child.path, skip) and is_everything_name(child.name):
                         found.append(child.path)
                     continue
             except OSError:

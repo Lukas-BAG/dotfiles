@@ -13,6 +13,15 @@ def _tilde(path: str, home: str) -> str:
     return "~" + path[len(home):] if path == home or path.startswith(home + "/") else path
 
 
+def _age(seconds: float) -> str:
+    minutes = int(seconds // 60)
+    if minutes < 1:
+        return "<1 min"
+    if minutes < 60:
+        return f"{minutes} min"
+    return f"{minutes // 60} h {minutes % 60} min"
+
+
 def _discover(args: argparse.Namespace, prog: str) -> tuple[str, list[str]] | None:
     """Resolve --root and find its Everything dirs; print an error and return None if none."""
     home = os.path.expanduser("~")
@@ -20,7 +29,10 @@ def _discover(args: argparse.Namespace, prog: str) -> tuple[str, list[str]] | No
         print(f"{prog}: not a dir: {args.root}", file=sys.stderr)
         return None
     root = os.path.realpath(args.root)
-    dirs = discovery.find_everything_dirs(root, home)
+    dirs, age = discovery.find_everything_dirs_cached(root, home, fresh=args.fresh)
+    if age is not None:
+        print(f"{prog}: using cached Everything-dir list ({_age(age)} old; "
+              "--fresh to re-search)", file=sys.stderr)
     if not dirs:
         print(f"{prog}: no Everything dirs under {_tilde(root, home)} (try --root <path>)",
               file=sys.stderr)
@@ -135,6 +147,8 @@ def build_parser() -> argparse.ArgumentParser:
                        "Read-only.")
     p.add_argument("--root", default=os.path.expanduser("~"),
                    help="where to search (default: $HOME)")
+    p.add_argument("--fresh", action="store_true",
+                   help="ignore the cached Everything-dir list (up to 6 h old) and search again")
     p.add_argument("--paths", action="store_true",
                    help="print bare absolute paths only, one per line (for scripting)")
     p.set_defaults(func=cmd_list)
@@ -147,6 +161,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("text", nargs="?", help="case-insensitive substring of the path")
     p.add_argument("--root", default=os.path.expanduser("~"),
                    help="where to search (default: $HOME)")
+    p.add_argument("--fresh", action="store_true",
+                   help="ignore the cached Everything-dir list (up to 6 h old) and search again")
     p.set_defaults(func=cmd_pick)
     return parser
 

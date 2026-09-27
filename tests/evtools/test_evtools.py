@@ -9,6 +9,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -108,14 +109,19 @@ class DiscoveryTest(TreeTest):
         self.assertIsNone(discovery.bookmark_dir(self.p("no-such-sdirs")))
 
     def test_read_only(self):
+        cache_dir = self.p(".cache", "dotfiles")
+
         def snapshot():
-            return sorted((d, tuple(sorted(dn)), tuple(sorted(fn)))
-                          for d, dn, fn in os.walk(self.home))
+            # every path except the cache dir, the one thing allowed to be written
+            return sorted(os.path.join(d, n) for d, dn, fn in os.walk(self.home)
+                          for n in dn + fn
+                          if not os.path.join(d, n).startswith(cache_dir))
         before = snapshot()
         discovery.find_everything_dirs(self.home, self.home)
         with contextlib.redirect_stdout(io.StringIO()):
             cli.main(["list", "--root", self.home])
         self.assertEqual(snapshot(), before)
+        self.assertEqual(os.listdir(cache_dir), ["everything-dirs.json"])
 
 
 class EntriesTest(TreeTest):
@@ -270,6 +276,76 @@ class PickCommandTest(TreeTest):
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertEqual(res.stdout.splitlines(), [
             "cde: ~/Archive/old_everything", self.p("Archive", "old_everything")])
+
+
+class CacheTest(TreeTest):
+    def find(self, root=None, fresh=False):
+        return discovery.find_everything_dirs_cached(root or self.home, self.home, fresh=fresh)
+
+    def test_miss_then_hit(self):
+        dirs, age = self.find()
+        self.assertIsNone(age)
+        self.assertEqual(dirs, discovery.find_everything_dirs(self.home, self.home))
+        with mock.patch.object(discovery, "find_everything_dirs",
+                               side_effect=AssertionError("should use cache")):
+            cached, age = self.find()
+        self.assertEqual(cached, dirs)
+        self.assertGreaterEqual(age, 0)
+
+    def test_new_dir_only_shows_after_expiry_or_fresh(self):
+        self.find()
+        new = self.p("New-Everything")
+        os.mkdir(new)
+        self.assertNotIn(new, self.find()[0])
+        self.assertIn(new, self.find(fresh=True)[0])
+        self.assertIn(new, self.find()[0])  # --fresh wrote the result back
+
+    def test_expiry(self):
+        self.find()
+        now = time.time()
+        with mock.patch("time.time", return_value=now + discovery.CACHE_TTL - 60):
+            self.assertIsNotNone(self.find()[1])
+        with mock.patch("time.time", return_value=now + discovery.CACHE_TTL + 1):
+            self.assertIsNone(self.find()[1])
+
+    def test_stale_paths_dropped_cache_still_valid(self):
+        self.find()
+        os.rmdir(self.p("Archive", "old_everything", "not-an-entry"))
+        os.rmdir(self.p("Archive", "old_everything"))
+        dirs, age = self.find()
+        self.assertIsNotNone(age)
+        self.assertNotIn(self.p("Archive", "old_everything"), dirs)
+
+    def test_separate_entry_per_root(self):
+        self.find()
+        dirs, age = self.find(self.p("Archive"))
+        self.assertIsNone(age)
+        self.assertEqual(dirs, [self.p("Archive", "old_everything")])
+        self.assertEqual(len(self.find()[0]), 4)
+
+    def test_corrupt_cache_is_ignored(self):
+        path = discovery.cache_file(self.home)
+        os.makedirs(os.path.dirname(path))
+        with open(path, "w") as f:
+            f.write("{not json")
+        dirs, age = self.find()
+        self.assertIsNone(age)
+        self.assertTrue(dirs)
+        self.assertIsNotNone(self.find()[1])  # rewritten as valid JSON
+
+    def test_cli_notice_on_stderr_only(self):
+        ListCommandTest.run_cli(self, "list", "--paths")
+        rc, out, err = ListCommandTest.run_cli(self, "list", "--paths")
+        self.assertEqual(rc, 0)
+        self.assertEqual(err, "everything list: using cached Everything-dir list "
+                              "(<1 min old; --fresh to re-search)\n")
+        self.assertIn(self.p("Main", "Everything"), out.splitlines())
+        _, _, err = ListCommandTest.run_cli(self, "pick", "--fresh", "archive")
+        self.assertNotIn("cached", err)
+
+    def test_age_format(self):
+        self.assertEqual([cli._age(s) for s in (5, 60, 59 * 60, 2 * 3600 + 12 * 60)],
+                         ["<1 min", "1 min", "59 min", "2 h 12 min"])
 
 
 if __name__ == "__main__":

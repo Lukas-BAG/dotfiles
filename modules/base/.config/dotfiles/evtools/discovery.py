@@ -4,8 +4,11 @@ An Everything dir is any dir whose name contains "everything" (any case),
 matching the Everything-like-dir convention, whether or not it has entries.
 """
 
+import json
 import os
 import re
+import tempfile
+import time
 
 # pruned wherever they appear: neither listed nor descended into
 SKIP_NAMES = {".git", "node_modules", ".cache"}
@@ -65,6 +68,75 @@ def find_everything_dirs(root: str, home: str | None = None) -> list[str]:
                 continue
             stack.append(child.path)
     return sorted(found)
+
+
+# Everything dirs are rarely created, so a search result this old is still good
+CACHE_TTL = 6 * 60 * 60
+# part of the cache key: bump when discovery rules change, so old results aren't reused
+CACHE_VERSION = 1
+
+
+def cache_file(home: str | None = None) -> str:
+    home = home if home is not None else os.path.expanduser("~")
+    return os.path.join(home, ".cache", "dotfiles", "everything-dirs.json")
+
+
+def _read_cache(path: str) -> dict:
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_cache(path: str, data: dict) -> None:
+    """Atomically replace the cache file (temp file + rename). Failures are ignored."""
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".everything-dirs.")
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(data, f, indent=1)
+            os.replace(tmp, path)
+        except BaseException:
+            os.unlink(tmp)
+            raise
+    except OSError:
+        pass
+
+
+def find_everything_dirs_cached(root: str, home: str | None = None, fresh: bool = False,
+                                ) -> tuple[list[str], float | None]:
+    """find_everything_dirs() through a cache in ~/.cache/dotfiles/.
+
+    Returns (dirs, age): age is the cache entry's age in seconds, or None if
+    a new search ran (and was written back). There is one entry per set of
+    search options; entries older than CACHE_TTL are ignored, as is the whole
+    cache with `fresh`. Cached dirs that no longer exist are left out. The
+    cache file is the only thing written.
+    """
+    home = home if home is not None else os.path.expanduser("~")
+    root = os.path.normpath(root)
+    path = cache_file(home)
+    key = json.dumps({"v": CACHE_VERSION, "root": root}, sort_keys=True)
+    data = _read_cache(path)
+    now = time.time()
+
+    entry = data.get(key)
+    if not fresh and isinstance(entry, dict):
+        try:
+            age = now - float(entry["time"])
+            dirs = [d for d in entry["dirs"] if isinstance(d, str)]
+        except (KeyError, TypeError, ValueError):
+            age = None
+        if age is not None and 0 <= age < CACHE_TTL:
+            return [d for d in dirs if os.path.isdir(d)], age
+
+    dirs = find_everything_dirs(root, home)
+    data[key] = {"time": now, "dirs": dirs}
+    _write_cache(path, data)
+    return dirs, None
 
 
 def bookmark_dir(sdirs: str | None = None) -> str | None:

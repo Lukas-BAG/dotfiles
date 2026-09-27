@@ -92,6 +92,12 @@ def cmd_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def _matching(dirs: list[str], text: str | None) -> list[str]:
+    """Dirs whose path contains `text` (any case); all of them if there's no text."""
+    needle = text.casefold() if text else None
+    return [d for d in dirs if needle is None or needle in d.casefold()]
+
+
 def cmd_pick(args: argparse.Namespace) -> int:
     """Print one Everything dir, matched by text and/or picked with fzf."""
     prog = "everything pick"
@@ -100,13 +106,12 @@ def cmd_pick(args: argparse.Namespace) -> int:
         return 1
     _, dirs = found
 
-    needle = args.text.casefold() if args.text else None
-    matches = [d for d in dirs if needle is None or needle in d.casefold()]
+    matches = _matching(dirs, args.text)
     if not matches:
         print(f"{prog}: no Everything dir matching '{args.text}'", file=sys.stderr)
         return 1
     if len(matches) == 1:
-        what = f"matching '{args.text}'" if needle else "found"
+        what = f"matching '{args.text}'" if args.text else "found"
         # stderr, so $(everything pick) still only captures the path
         print(f"{prog}: only one Everything dir {what}, picking it without fzf",
               file=sys.stderr)
@@ -122,7 +127,7 @@ def cmd_pick(args: argparse.Namespace) -> int:
         print(f"{prog}: fzf not found and several dirs match, refusing:", file=sys.stderr)
         print("\n".join(_tilde(d, home) for d in matches), file=sys.stderr)
         return 1
-    prompt = f"multiple matches for '{args.text}' > " if needle else "Everything dir > "
+    prompt = f"multiple matches for '{args.text}' > " if args.text else "Everything dir > "
     # fzf draws its UI on /dev/tty, so this also works inside $(...)
     res = subprocess.run(
         ["fzf", "--delimiter=\t", "--with-nth=1", "--layout=reverse",
@@ -191,12 +196,10 @@ def cmd_stats(args: argparse.Namespace) -> int:
     if found is None:
         return 1
     root, dirs = found
-    if args.dir:
-        needle = args.dir.casefold()
-        dirs = [d for d in dirs if needle in d.casefold()]
-        if not dirs:
-            print(f"{prog}: no Everything dir matching '{args.dir}'", file=sys.stderr)
-            return 1
+    dirs = _matching(dirs, args.dir)
+    if not dirs:
+        print(f"{prog}: no Everything dir matching '{args.dir}'", file=sys.stderr)
+        return 1
 
     home = os.path.expanduser("~")
     if args.per_dir:

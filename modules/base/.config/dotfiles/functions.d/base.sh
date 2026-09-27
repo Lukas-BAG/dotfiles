@@ -786,6 +786,123 @@ gel() {
     fi
 }
 
+# l(ist) s(ystem) e(verything): list every Everything or Everything-like dir
+# (name contains "everything", any case) under $HOME or --root, with its
+# "<yy><seq>[-suffix]" entry count, newest entry and suffixes. Dirs nested in
+# another listed dir are indented; "*" marks the "e" bashmark used by ge.
+# Read-only.
+#
+# Usage: lse [--root <path>] [--paths]
+#   --paths  print bare absolute paths only, one per line (for scripting)
+lse() {
+    local root="$HOME" paths_only=0
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --root)
+                if [ -z "$2" ]; then
+                    echo "lse: --root needs a path" >&2
+                    return 1
+                fi
+                root="$2"
+                shift 2
+                ;;
+            --paths) paths_only=1; shift ;;
+            -h|--help) echo "usage: lse [--root <path>] [--paths]"; return 0 ;;
+            *) echo "lse: unknown argument '$1'" >&2; return 1 ;;
+        esac
+    done
+
+    if [ ! -d "$root" ]; then
+        echo "lse: not a dir: $root" >&2
+        return 1
+    fi
+    root=$(realpath -- "$root")
+
+    # ~/.claude/projects holds one "-home-...-Everything-..." dir per Claude session
+    local dirs=()
+    mapfile -d '' -t dirs < <(find "$root" -xdev \
+        \( -name .git -o -name node_modules -o -name .cache \
+           -o -path "$HOME/.claude/projects" -o -path "$HOME/.local/share/Trash" \) -prune \
+        -o -type d -iname '*everything*' -print0 2>/dev/null | sort -z)
+
+    local root_display="$root"
+    [[ "$root" == "$HOME" || "$root" == "$HOME"/* ]] && root_display="~${root#"$HOME"}"
+
+    if [ "${#dirs[@]}" -eq 0 ]; then
+        echo "lse: no Everything dirs under $root_display (try --root <path>)" >&2
+        return 1
+    fi
+
+    if [ "$paths_only" -eq 1 ]; then
+        printf '%s\n' "${dirs[@]}"
+        return 0
+    fi
+
+    local sdirs="${SDIRS:-$HOME/.sdirs}" bookmark=""
+    [ -f "$sdirs" ] && bookmark=$(source "$sdirs" && [ -d "$DIR_e" ] && realpath -- "$DIR_e")
+
+    local entry_re='^[0-9]{6}(-[A-Za-z0-9]+)?$'
+    local col_path=() col_count=() col_newest=() col_suffix=()
+    local dir other depth display count newest newest_id id entry name suffix suffixes
+    local nested=0 marked=0 width=4
+    for dir in "${dirs[@]}"; do
+        depth=0
+        for other in "${dirs[@]}"; do
+            [[ "$dir" == "$other"/* ]] && depth=$((depth + 1))
+        done
+        [ "$depth" -gt 0 ] && nested=$((nested + 1))
+
+        count=0 newest="-" newest_id=-1 suffixes=""
+        for entry in "$dir"/*/; do
+            [ -d "$entry" ] || continue
+            name=${entry%/}
+            name=${name##*/}
+            [[ "$name" =~ $entry_re ]] || continue
+            count=$((count + 1))
+            id=$((10#${name:0:6}))
+            if [ "$id" -gt "$newest_id" ]; then
+                newest_id=$id
+                newest=$name
+            fi
+            suffix="(none)"
+            [[ "$name" == *-* ]] && suffix=${name#*-}
+            [[ ",$suffixes," == *",$suffix,"* ]] || suffixes="${suffixes:+$suffixes,}$suffix"
+        done
+
+        display="$dir"
+        [[ "$dir" == "$HOME"/* ]] && display="~${dir#"$HOME"}"
+        [ "$depth" -gt 0 ] && display="$(printf '%*s' $((depth * 2)) '')└ $display"
+        if [ "$dir" = "$bookmark" ]; then
+            display="* $display"
+            marked=1
+        else
+            display="  $display"
+        fi
+
+        col_path+=("$display")
+        col_count+=("$count")
+        col_newest+=("$newest")
+        col_suffix+=("${suffixes:--}")
+        [ "${#display}" -gt "$width" ] && width=${#display}
+    done
+
+    echo "Everything dirs under $root_display (${#dirs[@]} found, $nested nested)"
+    echo
+    # manual padding: bash printf widths count bytes, which breaks on "└"
+    local i pad
+    pad=$(printf '%*s' $((width - 6)) '')
+    printf '  PATH%s  %7s  %-12s  %s\n' "$pad" "ENTRIES" "NEWEST" "SUFFIX"
+    for i in "${!col_path[@]}"; do
+        pad=$(printf '%*s' $((width - ${#col_path[i]})) '')
+        printf '%s%s  %7s  %-12s  %s\n' "${col_path[i]}" "$pad" \
+            "${col_count[i]}" "${col_newest[i]}" "${col_suffix[i]}"
+    done
+    if [ "$marked" -eq 1 ]; then
+        echo
+        echo "* = bashmark 'e' (used by ge)"
+    fi
+}
+
 
 ################## Cut copy and paste functions ########
 

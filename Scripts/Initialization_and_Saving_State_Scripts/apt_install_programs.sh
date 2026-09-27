@@ -28,6 +28,7 @@ additional_packages=(
   brightnessctl
   network-manager-gnome
   libnotify-bin
+  dunst
   ffmpeg
   curl
   git-credential-oauth

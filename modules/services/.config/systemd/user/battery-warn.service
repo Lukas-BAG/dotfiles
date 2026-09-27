@@ -1,0 +1,8 @@
+[Unit]
+Description=Warn when the battery is low
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/battery-warn
+# Overrides (defaults shown):
+# Environment=BATTERY_WARN_LOW=15 BATTERY_WARN_CRITICAL=5 BATTERY_WARN_REPEAT=180

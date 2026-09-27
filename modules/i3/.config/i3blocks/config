@@ -38,8 +38,8 @@ color=#B8BB26
 
 # --- Power (hidden gracefully when no battery present) ---
 
-[battery2]
-markup=pango
+[battery]
+command=$HOME/.config/i3/scripts/battery_status.sh
 interval=30
 
 

@@ -70,6 +70,10 @@ def find_everything_dirs(root: str, home: str | None = None) -> list[str]:
     return sorted(found)
 
 
+# Global switch for the cache below. Off for now: searching ~ is fast enough on
+# current machines, and a stale cache hides new Everything dirs. With it off,
+# nothing is read or written and --fresh is accepted but does nothing.
+CACHE_ENABLED = False
 # Everything dirs are rarely created, so a search result this old is still good
 CACHE_TTL = 6 * 60 * 60
 # part of the cache key: bump when discovery rules change, so old results aren't reused
@@ -113,10 +117,12 @@ def find_everything_dirs_cached(root: str, home: str | None = None, fresh: bool 
     Returns (dirs, age): age is the cache entry's age in seconds, or None if
     a new search ran (and was written back). There is one entry per set of
     search options; entries older than CACHE_TTL are ignored, as is the whole
-    cache with `fresh`. Cached dirs that no longer exist are left out. The
+    cache with `fresh`. With CACHE_ENABLED off this is a plain search. Cached dirs that no longer exist are left out. The
     cache file is the only thing written.
     """
     home = home if home is not None else os.path.expanduser("~")
+    if not CACHE_ENABLED:
+        return find_everything_dirs(root, home), None
     root = os.path.normpath(root)
     path = cache_file(home)
     key = json.dumps({"v": CACHE_VERSION, "root": root}, sort_keys=True)

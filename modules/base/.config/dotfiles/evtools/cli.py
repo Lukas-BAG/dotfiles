@@ -148,7 +148,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--root", default=os.path.expanduser("~"),
                    help="where to search (default: $HOME)")
     p.add_argument("--fresh", action="store_true",
-                   help="ignore the cached Everything-dir list (up to 6 h old) and search again")
+                   help="ignore the cached Everything-dir list (up to 6 h old) and search again "
+                        "(no-op while the cache is disabled)")
     p.add_argument("--paths", action="store_true",
                    help="print bare absolute paths only, one per line (for scripting)")
     p.set_defaults(func=cmd_list)
@@ -162,7 +163,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--root", default=os.path.expanduser("~"),
                    help="where to search (default: $HOME)")
     p.add_argument("--fresh", action="store_true",
-                   help="ignore the cached Everything-dir list (up to 6 h old) and search again")
+                   help="ignore the cached Everything-dir list (up to 6 h old) and search again "
+                        "(no-op while the cache is disabled)")
     p.set_defaults(func=cmd_pick)
     return parser
 

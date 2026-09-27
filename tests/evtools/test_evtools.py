@@ -108,6 +108,7 @@ class DiscoveryTest(TreeTest):
     def test_bookmark_missing_file(self):
         self.assertIsNone(discovery.bookmark_dir(self.p("no-such-sdirs")))
 
+    @mock.patch.object(discovery, "CACHE_ENABLED", True)
     def test_read_only(self):
         cache_dir = self.p(".cache", "dotfiles")
 
@@ -279,6 +280,12 @@ class PickCommandTest(TreeTest):
 
 
 class CacheTest(TreeTest):
+    def setUp(self):
+        super().setUp()
+        patcher = mock.patch.object(discovery, "CACHE_ENABLED", True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def find(self, root=None, fresh=False):
         return discovery.find_everything_dirs_cached(root or self.home, self.home, fresh=fresh)
 
@@ -346,6 +353,19 @@ class CacheTest(TreeTest):
     def test_age_format(self):
         self.assertEqual([cli._age(s) for s in (5, 60, 59 * 60, 2 * 3600 + 12 * 60)],
                          ["<1 min", "1 min", "59 min", "2 h 12 min"])
+
+
+
+class CacheDisabledTest(TreeTest):
+    def test_disabled_always_searches_and_writes_nothing(self):
+        with mock.patch.object(discovery, "CACHE_ENABLED", False):
+            for _ in range(2):
+                rc, _, err = ListCommandTest.run_cli(self, "list", "--paths")
+                self.assertEqual((rc, err), (0, ""))
+            new = self.p("New-Everything")
+            os.mkdir(new)
+            self.assertIn(new, discovery.find_everything_dirs_cached(self.home, self.home)[0])
+        self.assertFalse(os.path.exists(self.p(".cache", "dotfiles")))
 
 
 if __name__ == "__main__":

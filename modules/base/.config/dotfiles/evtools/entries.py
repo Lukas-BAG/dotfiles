@@ -67,3 +67,17 @@ def list_entries(everything_dir: str) -> list[EntryName]:
     except OSError:
         return []
     return [entry for entry in map(parse_entry, sorted(names)) if entry]
+
+
+def list_sidecars(everything_dir: str) -> list[SidecarName]:
+    """Sidecar files directly inside `everything_dir`, sorted by name.
+
+    Symlinks to files count; dirs (incl. "temp") and names that don't parse
+    (e.g. ".mynew-suffix") don't. Unreadable dirs give [].
+    """
+    try:
+        with os.scandir(everything_dir) as it:
+            names = [e.name for e in it if e.is_file()]  # is_file() follows symlinks
+    except OSError:
+        return []
+    return [s for s in map(parse_sidecar, sorted(names)) if s]

@@ -1,12 +1,13 @@
 """`everything` command: subcommands over all Everything dirs."""
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
 import sys
 
-from . import discovery, entries
+from . import discovery, entries, stats
 
 
 def _tilde(path: str, home: str) -> str:
@@ -135,6 +136,85 @@ def cmd_pick(args: argparse.Namespace) -> int:
     return 0
 
 
+def _plural(n: int, word: str, plural: str | None = None) -> str:
+    return f"{n} {word if n == 1 else plural or word + 's'}"
+
+
+def _render_stats(st: stats.Stats, title: str) -> list[str]:
+    """Text sections for one Stats, as shown by `everything stats`."""
+    lines = [f"{title}  ({_plural(len(st.dirs), 'dir')}, "
+             f"{_plural(st.entries, 'entry', 'entries')}, {_plural(st.sidecars, 'sidecar')})", ""]
+
+    distinct = str(len(st.ids))
+    shared = st.shared_ids
+    if len(shared) == 1:
+        (i, sufs), = shared.items()
+        distinct += f"   ({i} is used by {len(sufs)} suffixes: {', '.join(sufs)})"
+    elif shared:
+        distinct += f"   ({len(shared)} ids are used by several suffixes)"
+    by_year = "   ".join(f"20{yy}: {n}" for yy, n in sorted(st.by_year.items())) or "-"
+    lines += ["ENTRIES",
+              f"  total entries   {st.entries}",
+              f"  distinct ids    {distinct}",
+              f"  by year         {by_year}", ""]
+
+    lines.append("SUFFIXES")
+    rows = []
+    for name, s in st.sorted_suffixes():
+        ranges = "   ".join(f"{yy}: {lo}" if lo == hi else f"{yy}: {lo}–{hi}"
+                           for yy, (lo, hi) in sorted(s.ranges.items()))
+        rows.append((name, s.entries, ranges))
+    if rows:
+        width = max(len("SUFFIX"), *(len(r[0]) for r in rows))
+        lines.append(f"  {'SUFFIX':<{width}}  {'ENTRIES':>7}  RANGE")
+        lines += [f"  {name:<{width}}  {n:>7}  {ranges}" for name, n, ranges in rows]
+    else:
+        lines.append("  -")
+    lines.append("")
+
+    lines.append(f"TAGS  ({st.tagged_sidecars} of {_plural(st.sidecars, 'sidecar')} tagged"
+                 + (f", {len(st.tags)} distinct)" if st.tags else ")"))
+    tags = st.sorted_tags()
+    if tags:
+        width = max(len(t) for t, _ in tags) + 1
+        lines += [f"  {'@' + t:<{width}}  {n:>4}" for t, n in tags]
+    else:
+        lines.append("  -")
+    return lines
+
+
+def cmd_stats(args: argparse.Namespace) -> int:
+    """Counts, id ranges per suffix and tag usage across Everything dirs."""
+    prog = "everything stats"
+    found = _discover(args, prog)
+    if found is None:
+        return 1
+    root, dirs = found
+    if args.dir:
+        needle = args.dir.casefold()
+        dirs = [d for d in dirs if needle in d.casefold()]
+        if not dirs:
+            print(f"{prog}: no Everything dir matching '{args.dir}'", file=sys.stderr)
+            return 1
+
+    home = os.path.expanduser("~")
+    if args.per_dir:
+        results = [(f"Everything stats for {_tilde(d, home)}", stats.collect([d])) for d in dirs]
+    else:
+        title = f"Everything stats under {_tilde(root, home)}"
+        if args.dir:
+            title += f" matching '{args.dir}'"
+        results = [(title, stats.collect(dirs))]
+
+    if args.json:
+        data = [st.to_json() for _, st in results]
+        print(json.dumps(data if args.per_dir else data[0], indent=2, ensure_ascii=False))
+        return 0
+    blocks = ["\n".join(_render_stats(st, title)) for title, st in results]
+    print("\n\n".join(blocks))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="everything", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True, metavar="<command>")
@@ -166,6 +246,26 @@ def build_parser() -> argparse.ArgumentParser:
                    help="ignore the cached Everything-dir list (up to 6 h old) and search again "
                         "(no-op while the cache is disabled)")
     p.set_defaults(func=cmd_pick)
+
+    p = sub.add_parser("stats", help="entry, suffix and tag statistics across Everything dirs",
+                       description="Statistics over the \"<yy><seq>[-suffix]\" entries and "
+                       "\"<entry>_<description>[_@tag...]\" sidecars of every Everything dir: "
+                       "entry counts (total, distinct ids, per year), entries and id range per "
+                       "suffix (split by year, since seq restarts every year) and tag usage. "
+                       "One combined total by default. Read-only; problems such as missing "
+                       "sidecars are left to the checker.")
+    p.add_argument("--root", default=os.path.expanduser("~"),
+                   help="where to search (default: $HOME)")
+    p.add_argument("--fresh", action="store_true",
+                   help="ignore the cached Everything-dir list (up to 6 h old) and search again "
+                        "(no-op while the cache is disabled)")
+    p.add_argument("--dir", metavar="TEXT",
+                   help="only Everything dirs whose path contains TEXT (any case), as in pick")
+    p.add_argument("--per-dir", action="store_true",
+                   help="separate stats for each Everything dir instead of one combined total")
+    p.add_argument("--json", action="store_true",
+                   help="print JSON instead of text (a list of objects with --per-dir)")
+    p.set_defaults(func=cmd_stats)
     return parser
 
 

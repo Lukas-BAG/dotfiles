@@ -5,6 +5,7 @@ Run from the repo root:  python3 -m unittest discover tests/evtools
 
 import contextlib
 import io
+import json
 import os
 import subprocess
 import sys
@@ -16,7 +17,7 @@ from unittest import mock
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(REPO, "modules", "base", ".config", "dotfiles"))
 
-from evtools import cli, discovery, entries  # noqa: E402
+from evtools import cli, discovery, entries, stats  # noqa: E402
 
 SHIM = os.path.join(REPO, "modules", "base", ".local", "bin", "everything")
 
@@ -150,6 +151,18 @@ class EntriesTest(TreeTest):
                                  "260001-abc", "260001-gel", "260002-lnk"])
         self.assertEqual(entries.list_entries(self.p("does-not-exist")), [])
 
+    def test_list_sidecars(self):
+        main = self.p("Main", "Everything")
+        open(os.path.join(main, "260001-gel_with spaces_@y.txt"), "w").close()
+        open(os.path.join(main, ".mynew-suffix"), "w").close()
+        os.mkdir(os.path.join(main, "250003-nry_a_dir"))  # dirs are never sidecars
+        os.symlink(os.path.join(main, "250002-nry_first_note_@ai_@x.md"),
+                   os.path.join(main, "250003-nry_linked.md"))
+        names = [s.name for s in entries.list_sidecars(main)]
+        self.assertEqual(names, ["250002-nry_first_note_@ai_@x.md", "250003-nry_linked.md",
+                                 "260001-gel_with spaces_@y.txt"])
+        self.assertEqual(entries.list_sidecars(self.p("does-not-exist")), [])
+
 
 class ListCommandTest(TreeTest):
     def run_cli(self, *args):
@@ -277,6 +290,147 @@ class PickCommandTest(TreeTest):
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertEqual(res.stdout.splitlines(), [
             "cde: ~/Archive/old_everything", self.p("Archive", "old_everything")])
+
+
+class StatsTest(TreeTest):
+    run_cli = ListCommandTest.run_cli
+
+    def setUp(self):
+        super().setUp()
+        main = self.p("Main", "Everything")
+        for name in ["250003-nry_second_@ai.md", "260001-gel_with spaces_@y.txt",
+                     "260001-abc_untagged.md", ".mynew-suffix"]:
+            open(os.path.join(main, name), "w").close()
+
+    def test_collect(self):
+        st = stats.collect([self.p("Main", "Everything"),
+                            self.p("Main", "Everything", "250001", "sub-everything")])
+        self.assertEqual((st.entries, st.sidecars, st.tagged_sidecars), (7, 4, 3))
+        self.assertEqual(dict(st.by_year), {"25": 4, "26": 3})
+        self.assertEqual(st.shared_ids, {250001: ["(none)", "sub"], 260001: ["abc", "gel"]})
+        self.assertEqual(len(st.ids), 5)
+        self.assertEqual([(n, s.entries, s.ranges) for n, s in st.sorted_suffixes()], [
+            ("nry", 2, {"25": ("0002", "0003")}),
+            ("(none)", 1, {"25": ("0001", "0001")}),
+            ("abc", 1, {"26": ("0001", "0001")}),
+            ("gel", 1, {"26": ("0001", "0001")}),
+            ("lnk", 1, {"26": ("0002", "0002")}),
+            ("sub", 1, {"25": ("0001", "0001")}),
+        ])
+        self.assertEqual(st.sorted_tags(), [("ai", 2), ("x", 1), ("y", 1)])
+
+    def test_ranges_split_by_year(self):
+        d = self.p("Multi-Everything")
+        for name in ["250042-nry", "250003-nry", "260008-nry", "260001-nry", "249999-nry"]:
+            os.makedirs(os.path.join(d, name))
+        st = stats.collect([d])
+        self.assertEqual(st.suffixes["nry"].ranges,
+                         {"24": ("9999", "9999"), "25": ("0003", "0042"),
+                          "26": ("0001", "0008")})
+
+    def test_tag_counted_once_per_sidecar(self):
+        d = self.p("Dup-Everything")
+        os.makedirs(d)
+        open(os.path.join(d, "260001_x_@a_@a.md"), "w").close()
+        self.assertEqual(stats.collect([d]).tags, {"a": 1})
+
+    def test_empty_tag_ignored(self):
+        d = self.p("Empty-Everything")
+        os.makedirs(d)
+        open(os.path.join(d, "260001_x_@.md"), "w").close()
+        open(os.path.join(d, "260002_y_@_@b.md"), "w").close()
+        st = stats.collect([d])
+        self.assertEqual((st.tags, st.tagged_sidecars), ({"b": 1}, 1))
+
+    def test_text_output(self):
+        rc, out, _ = self.run_cli("stats", "--dir", "main")
+        self.assertEqual(rc, 0)
+        self.assertEqual(out, """\
+Everything stats under ~ matching 'main'  (2 dirs, 7 entries, 4 sidecars)
+
+ENTRIES
+  total entries   7
+  distinct ids    5   (2 ids are used by several suffixes)
+  by year         2025: 4   2026: 3
+
+SUFFIXES
+  SUFFIX  ENTRIES  RANGE
+  nry           2  25: 0002–0003
+  (none)        1  25: 0001
+  abc           1  26: 0001
+  gel           1  26: 0001
+  lnk           1  26: 0002
+  sub           1  25: 0001
+
+TAGS  (3 of 4 sidecars tagged, 3 distinct)
+  @ai     2
+  @x      1
+  @y      1
+""")
+
+    def test_per_dir_and_empty_dir(self):
+        rc, out, _ = self.run_cli("stats", "--per-dir", "--root", self.p("Archive"))
+        self.assertEqual(rc, 0)
+        self.assertEqual(out, """\
+Everything stats for ~/Archive/old_everything  (1 dir, 0 entries, 0 sidecars)
+
+ENTRIES
+  total entries   0
+  distinct ids    0
+  by year         -
+
+SUFFIXES
+  -
+
+TAGS  (0 of 0 sidecars tagged)
+  -
+""")
+        _, out, _ = self.run_cli("stats", "--per-dir")
+        self.assertEqual(out.count("Everything stats for "), 4)
+        self.assertIn("Everything stats for ~/Main/Everything/250001/sub-everything"
+                      "  (1 dir, 1 entry, 0 sidecars)", out)
+
+    def test_single_shared_id_is_named(self):
+        for name in ["260001", "260001-b", "260002-b"]:
+            os.makedirs(self.p("Solo-Everything", name))
+        _, out, _ = self.run_cli("stats", "--dir", "solo")
+        self.assertIn("  distinct ids    2   (260001 is used by 2 suffixes: (none), b)\n", out)
+
+    def test_json(self):
+        rc, out, _ = self.run_cli("stats", "--json", "--dir", "main")
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["dirs"], [self.p("Main", "Everything"),
+                                        self.p("Main", "Everything", "250001", "sub-everything")])
+        self.assertEqual(data["shared_ids"], {"250001": ["(none)", "sub"],
+                                              "260001": ["abc", "gel"]})
+        self.assertEqual(data["by_year"], {"2025": 4, "2026": 3})
+        self.assertEqual(data["suffixes"]["nry"], {"entries": 2,
+                                                   "ranges": {"2025": ["0002", "0003"]}})
+        self.assertEqual(data["tags"], {"ai": 2, "x": 1, "y": 1})
+        _, out, _ = self.run_cli("stats", "--json", "--per-dir")
+        self.assertEqual([len(d["dirs"]) for d in json.loads(out)], [1, 1, 1, 1])
+
+    def test_dir_no_match(self):
+        rc, out, err = self.run_cli("stats", "--dir", "zzz")
+        self.assertEqual((rc, out), (1, ""))
+        self.assertIn("everything stats: no Everything dir matching 'zzz'", err)
+
+    def test_read_only(self):
+        # the discovery cache is the one allowed write, so enable it and leave it out
+        cache_dir = os.path.dirname(discovery.cache_file(self.home))
+        os.makedirs(cache_dir)  # so creating it doesn't touch ~/.cache's mtime
+
+        def snapshot():
+            return sorted((os.path.join(d, n), os.lstat(os.path.join(d, n)).st_mtime_ns)
+                          for d, dn, fn in os.walk(self.home) if not d.startswith(cache_dir)
+                          for n in dn + fn if os.path.join(d, n) != cache_dir)
+        before = snapshot()
+        with mock.patch.object(discovery, "CACHE_ENABLED", True):
+            for args in [(), ("--per-dir",), ("--json",)]:
+                self.run_cli("stats", *args)
+        self.assertTrue(os.path.exists(discovery.cache_file(self.home)))
+        self.assertEqual(snapshot(), before)
 
 
 class CacheTest(TreeTest):

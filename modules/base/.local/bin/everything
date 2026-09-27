@@ -1,0 +1,7 @@
+#!/usr/bin/env python3
+"""Shim: the package lives in ../../.config/dotfiles/evtools/, resolved
+through the stow symlink so it also runs straight from a repo checkout."""
+import os, sys
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "../../.config/dotfiles"))
+from evtools.cli import main
+sys.exit(main())

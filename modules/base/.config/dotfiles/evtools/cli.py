@@ -8,7 +8,7 @@ import subprocess
 import sys
 from collections import Counter
 
-from . import check, discovery, entries, goto, stats
+from . import check, discovery, entries, goto, new, stats
 
 
 def _tilde(path: str, home: str) -> str:
@@ -358,6 +358,51 @@ def cmd_check(args: argparse.Namespace) -> int:
     return 1 if counts else 0
 
 
+def cmd_new(args: argparse.Namespace) -> int:
+    """Create the next entry dir + sidecar and print its path, for mynew to cd into."""
+    prog = args.label
+    d = os.path.abspath(args.dir)
+    if not os.path.isdir(d):
+        print(f"{prog}: not a dir: {args.dir}", file=sys.stderr)
+        return 1
+    try:
+        suffix = new.read_suffix(d)
+        save = None
+        if suffix is None:
+            # plan once first, so a non-Everything dir is refused before asking
+            new.plan(d, args.description, args.tags, "", new.current_year())
+            # everything but the new path goes to stderr: mynew runs this in $(...)
+            print(f"{prog}: no suffix configured for {d} yet.", file=sys.stderr)
+            print("Suffix to use for new entries here (leave blank for none): ",
+                  end="", file=sys.stderr, flush=True)
+            answer = sys.stdin.readline()
+            if not answer:
+                print(file=sys.stderr)
+                raise new.Refusal("no answer, refusing (nothing saved)")
+            suffix = save = new.check_suffix(answer)
+        p = new.plan(d, args.description, args.tags, suffix, new.current_year())
+    except new.Refusal as e:
+        print(f"{prog}: {e}", file=sys.stderr)
+        return 1
+
+    if p.rolled_over:
+        print(f"{prog}: year prefix rolled over (highest existing entry is '{p.rolled_over}', "
+              f"current year is '{p.entry[:2]}') - starting sequence over at 0001",
+              file=sys.stderr)
+    words = new.snake(args.description).split("_")
+    if len(words) > 1 and check.SHORT_WORD_RE.match(words[-1]):
+        print(f"{prog}: note: description ends in \"_{words[-1]}\", did you mean tag "
+              f"@{words[-1]}? (tags go after the quoted description)", file=sys.stderr)
+    try:
+        path = new.create(p, save)
+    except OSError as e:
+        print(f"{prog}: {e}", file=sys.stderr)
+        return 1
+    print(f"{prog}: created '{p.entry}/' with sidecar '{p.sidecar}'", file=sys.stderr)
+    print(path)
+    return 0
+
+
 # searched when --root isn't given (tests point this at a fake tree)
 DEFAULT_ROOT = "/"
 NETWORK_HELP = ("also search network filesystems (nfs, cifs, sshfs, ...); local mounts are "
@@ -463,6 +508,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true",
                    help="print JSON instead of text")
     p.set_defaults(func=cmd_check)
+
+    p = sub.add_parser("new", help="create the next entry dir + sidecar (used by mynew)",
+                       description="Create the next \"<yy><seq>[-suffix]\" entry dir in an "
+                       "Everything dir (the current dir by default) plus its empty sidecar "
+                       "\"<entry>_<description>[_@tag...].md\", and print the new dir's "
+                       "path. seq is one past the highest id there and restarts at 0001 in a "
+                       "new year. The suffix is asked once per dir and saved in its "
+                       "\".mynew-suffix\". Refuses in a dir without entries and never "
+                       "overwrites anything. mynew wraps this to cd there.")
+    p.add_argument("description", help="free text, turned into lower_snake_case")
+    p.add_argument("tags", nargs="*", metavar="tag", help="tags, with or without a leading @")
+    p.add_argument("--dir", default=".", help="the Everything dir (default: current dir)")
+    p.add_argument("--label", default="everything new", help=argparse.SUPPRESS)
+    p.set_defaults(func=cmd_new)
     return parser
 
 

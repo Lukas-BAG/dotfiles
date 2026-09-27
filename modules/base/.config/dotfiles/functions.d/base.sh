@@ -443,82 +443,23 @@ PYEOF
 # Must be run from inside an existing Everything dir. On first use in a given
 # dir it asks once which suffix to use there (can be left blank) and
 # remembers it in a hidden ".mynew-suffix" file in that dir from then on.
+# The work is done by `everything new` (see ~/.local/bin/everything); this
+# only does the cd, which a subprocess can't do for the shell.
 #
 # Usage: mynew "description" [tag ...]
 #   tags may be passed with or without a leading "@" (e.g. "ai" or "@ai").
 mynew() {
-    local suffix_file=".mynew-suffix"
-    local entry_re='^[0-9]{6}(-[A-Za-z0-9]+)?$'
-
+    local dir
     if [ "$#" -lt 1 ]; then
         echo "mynew: 1 argument required, description (plus optional tags)" >&2
         return 1
     fi
-
-    local description="$1"
-    shift
-
-    local entry max_id=0
-    for entry in */; do
-        entry=${entry%/}
-        if [[ "$entry" =~ $entry_re ]]; then
-            local id=$((10#${entry:0:6}))
-            [ "$id" -gt "$max_id" ] && max_id=$id
-        fi
-    done
-
-    if [ "$max_id" -eq 0 ]; then
-        echo "mynew: no existing <yy><seq>[-suffix] entries found in $(pwd) - this doesn't look like an Everything dir, refusing" >&2
-        return 1
-    fi
-
-    local suffix
-    if [ ! -e "$suffix_file" ]; then
-        echo "mynew: no suffix configured for $(pwd) yet."
-        read -r -p "Suffix to use for new entries here (leave blank for none): " suffix
-        printf '%s' "$suffix" > "$suffix_file"
+    dir=$(everything new --label mynew "$@") || return
+    if [ -d "$dir" ]; then
+        cd -- "$dir"
     else
-        suffix=$(cat "$suffix_file")
+        printf '%s\n' "$dir"  # e.g. --help output
     fi
-
-    local current_year max_year max_seq next_seq
-    current_year=$(date +%y)
-    max_year=${max_id:0:2}
-    max_seq=$((10#${max_id:2:4}))
-
-    if [ "$max_year" = "$current_year" ]; then
-        next_seq=$((max_seq + 1))
-    else
-        echo "mynew: year prefix rolled over (highest existing entry is '$max_year', current year is '$current_year') - starting sequence over at 0001"
-        next_seq=1
-    fi
-
-    local new_id
-    new_id=$(printf '%s%04d' "$current_year" "$next_seq")
-
-    local new_dirname="$new_id"
-    [ -n "$suffix" ] && new_dirname="${new_id}-${suffix}"
-
-    if [ -e "$new_dirname" ]; then
-        echo "mynew: '$new_dirname' already exists, refusing to touch it" >&2
-        return 1
-    fi
-
-    local snake_description
-    snake_description=$(echo "$description" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/_/g; s/^_+//; s/_+$//')
-
-    local tag_suffix="" tag
-    for tag in "$@"; do
-        tag=${tag#@}
-        tag_suffix="${tag_suffix}_@${tag}"
-    done
-
-    local sidecar="${new_dirname}_${snake_description}${tag_suffix}.md"
-
-    mkdir -- "$new_dirname" &&
-    touch -- "$sidecar" &&
-    cd -- "$new_dirname" &&
-    echo "mynew: created '$new_dirname/' with sidecar '$sidecar'"
 }
 
 

@@ -17,7 +17,7 @@ from unittest import mock
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(REPO, "modules", "base", ".config", "dotfiles"))
 
-from evtools import check, cli, discovery, entries, goto, stats  # noqa: E402
+from evtools import check, cli, discovery, entries, goto, new, stats  # noqa: E402
 
 SHIM = os.path.join(REPO, "modules", "base", ".local", "bin", "everything")
 
@@ -885,6 +885,184 @@ class CheckTest(TreeTest):
             for args in [(), ("--all-levels",), ("--json",)]:
                 self.run_cli("check", *args)
         self.assertEqual(snapshot(), before)
+
+
+class NewCommandTest(TreeTest):
+    def setUp(self):
+        super().setUp()
+        self.ev = self.p("New", "Everything")
+        os.makedirs(self.ev)
+        patcher = mock.patch.object(new, "current_year", return_value="26")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def mk(self, *names):
+        for n in names:
+            os.mkdir(os.path.join(self.ev, n))
+
+    def names(self):
+        return sorted(os.listdir(self.ev))
+
+    def suffix_file(self, text):
+        with open(os.path.join(self.ev, ".mynew-suffix"), "w") as f:
+            f.write(text)
+
+    def run_new(self, *args, stdin=""):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), \
+                mock.patch.object(sys, "stdin", io.StringIO(stdin)):
+            rc = cli.main(["new", "--dir", self.ev, *args])
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_first_use_asks_suffix_and_saves_it(self):
+        self.mk("260001-gel")
+        rc, out, err = self.run_new("Fire drill", stdin="nry\n")
+        self.assertEqual((rc, out), (0, os.path.join(self.ev, "260002-nry") + "\n"))
+        self.assertIn(f"no suffix configured for {self.ev} yet.", err)
+        self.assertIn("leave blank for none): ", err)
+        self.assertTrue(err.endswith("created '260002-nry/' with sidecar "
+                                     "'260002-nry_fire_drill.md'\n"))
+        self.assertEqual(self.names(), [".mynew-suffix", "260001-gel", "260002-nry",
+                                        "260002-nry_fire_drill.md"])
+        with open(os.path.join(self.ev, ".mynew-suffix")) as f:
+            self.assertEqual(f.read(), "nry")
+        # second time: no question, stdin isn't read
+        rc, out, err = self.run_new("again", stdin="ignored\n")
+        self.assertEqual((rc, out), (0, os.path.join(self.ev, "260003-nry") + "\n"))
+        self.assertNotIn("suffix", err)
+
+    def test_blank_answer_means_no_suffix(self):
+        self.mk("260001")
+        rc, out, _ = self.run_new("x y", stdin="\n")
+        self.assertEqual((rc, out), (0, os.path.join(self.ev, "260002") + "\n"))
+        self.assertIn("260002_x_y.md", self.names())
+        with open(os.path.join(self.ev, ".mynew-suffix")) as f:
+            self.assertEqual(f.read(), "")
+        self.suffix_file("\n")  # e.g. written by hand: whitespace is ignored
+        rc, out, _ = self.run_new("z")
+        self.assertEqual(out, os.path.join(self.ev, "260003") + "\n")
+
+    def test_next_id_is_past_highest_of_any_suffix(self):
+        self.mk("260001-nry", "260007-abc", "260003", "250099-nry", "temp", "notes")
+        self.suffix_file("nry")
+        rc, out, err = self.run_new("n")
+        self.assertEqual((rc, out), (0, os.path.join(self.ev, "260008-nry") + "\n"))
+        self.assertNotIn("rolled over", err)
+
+    def test_year_rollover(self):
+        self.mk("250041-nry", "250042-abc")
+        self.suffix_file("nry")
+        rc, out, err = self.run_new("n")
+        self.assertEqual((rc, out), (0, os.path.join(self.ev, "260001-nry") + "\n"))
+        self.assertIn("everything new: year prefix rolled over (highest "
+                      "existing entry is '25', current year is '26') - starting sequence over "
+                      "at 0001\n", err)
+
+    def test_description_and_tags(self):
+        self.mk("260001")
+        self.suffix_file("")
+        rc, _, err = self.run_new("  Fire Drill (v2)! Ärger ", "ai", "@x", "@@y")
+        self.assertEqual(rc, 0)
+        self.assertIn("260002_fire_drill_v2_rger_@ai_@x_@@y.md", self.names())
+        self.assertNotIn("note:", err)
+        parsed = entries.parse_sidecar("260002_fire_drill_v2_rger_@ai_@x_@@y.md")
+        self.assertEqual(parsed.tags, ("ai", "x", "@y"))
+
+    def test_warns_about_tag_without_at(self):
+        self.mk("260001")
+        self.suffix_file("")
+        rc, _, err = self.run_new("working on dotfiles ai")
+        self.assertEqual(rc, 0)
+        self.assertIn('note: description ends in "_ai", did you mean tag @ai?', err)
+        self.assertIn("260002_working_on_dotfiles_ai.md", self.names())
+
+    def test_refuses_outside_everything_dir(self):
+        self.mk("temp", "notes", "2600001")
+        rc, out, err = self.run_new("x", stdin="nry\n")
+        self.assertEqual((rc, out), (1, ""))
+        self.assertEqual(err, "everything new: no existing <yy><seq>[-suffix] entries found in "
+                              f"{self.ev} - this doesn't look like an Everything dir, refusing\n")
+        self.assertEqual(self.names(), ["2600001", "notes", "temp"])  # not even the suffix
+        rc, _, err = self.run_new("x", "--dir", self.p("nope"))
+        self.assertEqual((rc, err), (1, f"everything new: not a dir: {self.p('nope')}\n"))
+
+    def test_never_overwrites(self):
+        self.mk("260001-nry")
+        self.suffix_file("nry")
+        # a real 260002-nry dir would count as an entry and move the id on to 260003
+        for existing, make in [("260002-nry", lambda p: os.symlink(self.p("gone"), p)),
+                               ("260002-nry", lambda p: open(p, "w").close()),
+                               ("260002-nry_other.md", lambda p: open(p, "w").close())]:
+            path = os.path.join(self.ev, existing)
+            make(path)
+            before = self.names()
+            rc, out, err = self.run_new("x")
+            self.assertEqual((rc, out), (1, ""))
+            self.assertEqual(err, f"everything new: '{existing}' already exists, "
+                                  "refusing to touch it\n")
+            self.assertEqual(self.names(), before)
+            os.remove(path)
+
+    def test_other_refusals_write_nothing(self):
+        self.mk("260001")
+        cases = [
+            ((["x"], ""), "no answer, refusing (nothing saved)"),
+            ((["x"], "a-b\n"), "suffix 'a-b' may only be letters and digits, refusing"),
+            ((["!!!"], "\n"), "description has no letters or digits, refusing"),
+            ((["x", "@"], "\n"), "invalid tag '@', refusing"),
+            ((["x", "a/b"], "\n"), "invalid tag '@a/b', refusing"),
+        ]
+        for (args, stdin), msg in cases:
+            rc, out, err = self.run_new(*args, stdin=stdin)
+            self.assertEqual((rc, out), (1, ""), msg)
+            self.assertTrue(err.endswith(f"everything new: {msg}\n"), err)
+            self.assertEqual(self.names(), ["260001"])
+        self.suffix_file("a b")
+        rc, _, err = self.run_new("x")
+        self.assertEqual(rc, 1)
+        self.assertIn(".mynew-suffix holds 'a b'", err)
+        self.suffix_file("")
+        self.mk("270001")
+        rc, _, err = self.run_new("x")
+        self.assertEqual(rc, 1)
+        self.assertIn("highest entry '270001' is from a later year than this one ('26')", err)
+        self.assertEqual(self.names(), [".mynew-suffix", "260001", "270001"])
+
+    def test_no_ids_left(self):
+        self.mk("269999")
+        self.suffix_file("")
+        rc, _, err = self.run_new("x")
+        self.assertEqual((rc, err), (1, "everything new: no ids left for 2026 after "
+                                        "'269999', refusing\n"))
+
+    run_bash = GotoCommandTest.run_bash
+
+    def test_mynew_asks_and_changes_dir(self):
+        year = time.strftime("%y")  # subprocess: the real year
+        self.mk(f"{year}0005-abc")
+        res = subprocess.run(
+            ["bash", "-c",
+             f'everything() {{ "{SHIM}" "$@"; }}; source "{self.functions()}"; '
+             'mynew "Hello World" ai && pwd'],
+            input="nry\n", capture_output=True, text=True, cwd=self.ev,
+            env={**os.environ, "HOME": self.home})
+        entry = f"{year}0006-nry"
+        self.assertEqual((res.returncode, res.stdout), (0, os.path.join(self.ev, entry) + "\n"),
+                         res.stderr)
+        self.assertIn("Suffix to use for new entries here", res.stderr)
+        self.assertTrue(res.stderr.endswith(f"mynew: created '{entry}/' with sidecar "
+                                            f"'{entry}_hello_world_@ai.md'\n"))
+
+    def test_mynew_failure_stays_put(self):
+        res = self.run_bash("mynew x; echo $?; pwd", cwd=self.ev)
+        self.assertEqual(res.stdout.splitlines(), ["1", self.ev])
+        self.assertIn("mynew: no existing <yy><seq>[-suffix] entries found", res.stderr)
+        res = self.run_bash("mynew; echo $?")
+        self.assertEqual((res.stdout, res.stderr),
+                         ("1\n", "mynew: 1 argument required, description (plus optional tags)\n"))
+
+    def functions(self):
+        return os.path.join(REPO, "modules", "base", ".config", "dotfiles", "functions.d", "base.sh")
 
 
 if __name__ == "__main__":

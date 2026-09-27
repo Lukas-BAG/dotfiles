@@ -2,8 +2,8 @@
 
 An entry is a dir named "<yy><seq>[-suffix]" (e.g. "260003-nry"), usually
 paired with a sidecar file "<entry>_<description>[_@tag...].<ext>" next to
-it (e.g. "260003-nry_working_on_dotfiles_@ai.md"). See mynew() in
-functions.d/base.sh, which creates both.
+it (e.g. "260003-nry_working_on_dotfiles_@ai.md"). `everything new`
+(new.py, wrapped by mynew) creates both.
 """
 
 import os

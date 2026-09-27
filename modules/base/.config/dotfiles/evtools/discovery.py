@@ -78,6 +78,18 @@ def is_everything_name(name: str) -> bool:
     return "everything" in name.casefold()
 
 
+def enclosing_everything_dir(path: str) -> str | None:
+    """The nearest of `path` and its ancestors that is an Everything dir, or None."""
+    path = os.path.abspath(path)
+    while True:
+        if is_everything_name(os.path.basename(path)):
+            return path
+        parent = os.path.dirname(path)
+        if parent == path:
+            return None
+        path = parent
+
+
 def find_everything_dirs(root: str, home: str | None = None, network: bool = False,
                          mounts_file: str = MOUNTS_FILE) -> list[str]:
     """All Everything dirs under `root` (including `root` itself), sorted.

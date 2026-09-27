@@ -481,7 +481,7 @@ _ge_cd() {
 # g (bashmarks) + e (Everything): jump to an entry in the dir of the bashmark
 # "e" (see bashmarks.sh), by numeric id (optionally with year) or by free text
 # searched against sidecar names. One match: cd straight in; several: fzf.
-# With -a/--all, search every Everything dir that lse lists instead.
+# With -a/--all, search every Everything dir (the ones `everything list` shows) instead.
 #
 # Usage: ge [-a|--all] <id> [year]
 #        ge [-a|--all] <text>
@@ -508,7 +508,7 @@ gel() {
     _ge_cd gel --dir "$PWD" "$@"
 }
 
-# c(d) e(verything): jump to one of the Everything dirs that lse lists. The
+# c(d) e(verything): jump to one of the Everything dirs `everything list` shows. The
 # picking is done by `everything pick` (see ~/.local/bin/everything); this only
 # does the cd, which a subprocess can't do for the shell.
 #
@@ -525,8 +525,8 @@ cde() {
     fi
 }
 
-# lse (list every Everything dir) is now `everything list`, aliased in
-# aliases.d/base.sh; see ~/.local/bin/everything.
+# lse (list the entries of the Everything dir you're in) is `everything
+# entries`, aliased in aliases.d/base.sh; see ~/.local/bin/everything.
 
 
 ################## Cut copy and paste functions ########

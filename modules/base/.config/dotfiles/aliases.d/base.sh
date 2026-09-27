@@ -30,4 +30,4 @@ alias claude-box="ssh -p 2222 root@127.0.0.1"
 alias trufflehog="trufflehog --no-verification"
 alias lsg="ls | grep -i"
 
-alias lse='everything list'  # list every Everything dir, see ~/.local/bin/everything
+alias lse='everything entries'  # list the entries of the Everything dir you're in, see ~/.local/bin/everything

@@ -223,6 +223,79 @@ def cmd_goto(args: argparse.Namespace) -> int:
     return 0
 
 
+def _human_size(n: int) -> str:
+    """Bytes as e.g. "512B", "1.5K", "23M" (powers of 1024, like `du -h`)."""
+    for unit in "BKMGT":
+        if n < 1024 or unit == "T":
+            break
+        n /= 1024
+    if unit == "B":
+        return f"{n}B"
+    return f"{n:.1f}{unit}" if n < 10 else f"{n:.0f}{unit}"
+
+
+def cmd_entries(args: argparse.Namespace) -> int:
+    """List the entries of the Everything dir you're in (or of all of them)."""
+    prog = "everything entries"
+    home = os.path.expanduser("~")
+    if args.all:
+        found = _discover(args, prog)
+        if found is None:
+            return 1
+        root, dirs = found
+        title = f"Entries of every Everything dir under {_tilde(root, home)}"
+    else:
+        d = discovery.enclosing_everything_dir(os.getcwd())
+        if d is None:
+            print(f"{prog}: not inside an Everything dir (cd into one, or use --all)",
+                  file=sys.stderr)
+            return 1
+        dirs = [d]
+        title = f"Entries of {_tilde(d, home) if d != home else d}"
+
+    rows = []
+    for d in dirs:
+        sidecars = entries.sidecars_by_entry(d)
+        for e in entries.list_entries(d):
+            # several sidecars per entry are a checker problem; show the first
+            s = sidecars.get(e.name, [None])[0]
+            size = entries.tree_size(os.path.join(d, e.name)) if args.size else 0
+            rows.append((e, d, s, size))
+    # by id, then full name so suffixes of one id sit together; dir breaks ties
+    rows.sort(key=lambda r: (r[0].id, r[0].name, r[1]))
+    if args.size:
+        rows.sort(key=lambda r: r[3], reverse=True)  # stable: ties keep the id order
+
+    table = []
+    for e, d, s, size in rows:
+        row = [e.name]
+        if args.size:
+            row.append(_human_size(size))
+        row += [s.description if s else "", " ".join("@" + t for t in s.tags) if s else ""]
+        if args.all:
+            row.append(_tilde(d, home) if d != home else d)
+        table.append(row)
+    header = ["ENTRY"] + (["SIZE"] if args.size else []) + ["DESCRIPTION", "TAGS"]
+    header += ["EVERYTHING DIR"] if args.all else []
+
+    count = _plural(len(rows), "entry", "entries")
+    if args.all:
+        count += f" in {_plural(len(dirs), 'dir')}"
+    if args.size:
+        count += f", {_human_size(sum(r[3] for r in rows))} total"
+    print(f"{title} ({count})")
+    if not rows:
+        return 0
+    print()
+    widths = [max(len(r[i]) for r in [header] + table) for i in range(len(header))]
+    size_col = 1 if args.size else None
+    for r in [header] + table:
+        cells = [c.rjust(w) if i == size_col else c.ljust(w)
+                 for i, (c, w) in enumerate(zip(r, widths))]
+        print("  ".join(cells).rstrip())
+    return 0
+
+
 def _plural(n: int, word: str, plural: str | None = None) -> str:
     return f"{n} {word if n == 1 else plural or word + 's'}"
 
@@ -413,7 +486,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="everything", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True, metavar="<command>")
 
-    p = sub.add_parser("list", help="list every Everything dir (alias: lse)",
+    p = sub.add_parser("list", help="list every Everything dir (cde picks one)",
                        description="List every Everything or Everything-like dir (name "
                        "contains \"everything\", any case) with its \"<yy><seq>[-suffix]\" "
                        "entry count, newest entry and suffixes. Dirs nested in another "
@@ -428,6 +501,28 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--paths", action="store_true",
                    help="print bare absolute paths only, one per line (for scripting)")
     p.set_defaults(func=cmd_list)
+
+    p = sub.add_parser("entries", help="list the entries of the Everything dir you're in "
+                       "(alias: lse)",
+                       description="List the \"<yy><seq>[-suffix]\" entry dirs of the "
+                       "Everything dir you're in (the current dir or its nearest ancestor "
+                       "whose name contains \"everything\", any case) with the description "
+                       "and tags from their \"<entry>_<description>[_@tag...]\" sidecar. "
+                       "Sorted by id, then name. Entries without a sidecar get an empty "
+                       "description. Read-only.")
+    p.add_argument("-a", "--all", action="store_true",
+                   help="list the entries of every Everything dir under --root, with an "
+                        "extra column naming the dir; works from anywhere")
+    p.add_argument("--size", action="store_true",
+                   help="add each entry's recursive size (symlinks not followed) and sort by "
+                        "it, largest first")
+    p.add_argument("--root", default=DEFAULT_ROOT,
+                   help="where --all searches for Everything dirs (default: /)")
+    p.add_argument("--network", action="store_true", help=NETWORK_HELP)
+    p.add_argument("--fresh", action="store_true",
+                   help="with --all, ignore the cached Everything-dir list (no-op while the "
+                        "cache is disabled)")
+    p.set_defaults(func=cmd_entries)
 
     p = sub.add_parser("pick", help="print one Everything dir, via text match or fzf (used by cde)",
                        description="Print the absolute path of one Everything dir. Without "

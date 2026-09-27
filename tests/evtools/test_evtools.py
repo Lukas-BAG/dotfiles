@@ -887,6 +887,116 @@ class CheckTest(TreeTest):
         self.assertEqual(snapshot(), before)
 
 
+class EntriesCommandTest(TreeTest):
+    run_cli = ListCommandTest.run_cli
+
+    def setUp(self):
+        super().setUp()
+        self.main = self.p("Main", "Everything")
+        open(os.path.join(self.main, "260001-gel_gel_notes.md"), "w").close()
+        with open(os.path.join(self.main, "250003-nry", "data.bin"), "wb") as f:
+            f.write(b"x" * 3000)
+        os.makedirs(os.path.join(self.main, "250003-nry", "sub"))
+        with open(os.path.join(self.main, "250003-nry", "sub", "more.bin"), "wb") as f:
+            f.write(b"x" * 100)
+        with open(self.p("elsewhere", "big.bin"), "wb") as f:  # behind the symlinked entry
+            f.write(b"x" * 99999)
+        self.cd(self.main)
+
+    def cd(self, path):
+        old = os.getcwd()
+        os.chdir(path)
+        self.addCleanup(os.chdir, old)
+
+    def test_enclosing_everything_dir(self):
+        find = discovery.enclosing_everything_dir
+        self.assertEqual(find(self.main), self.main)
+        self.assertEqual(find(os.path.join(self.main, "250003-nry", "sub")), self.main)
+        nested = os.path.join(self.main, "250001", "sub-everything")
+        self.assertEqual(find(os.path.join(nested, "250001-sub")), nested)  # nearest wins
+        self.assertIsNone(find(self.p("elsewhere")))
+
+    def test_tree_size(self):
+        self.assertEqual(entries.tree_size(os.path.join(self.main, "250003-nry")), 3100)
+        link = os.path.join(self.main, "260002-lnk")
+        self.assertEqual(entries.tree_size(link), os.lstat(link).st_size)  # not followed
+        self.assertEqual(entries.tree_size(self.p("nope")), 0)
+
+    def test_human_size(self):
+        self.assertEqual([cli._human_size(n) for n in [0, 1023, 1536, 20 * 1024, 5 * 2**30]],
+                         ["0B", "1023B", "1.5K", "20K", "5.0G"])
+
+    def test_table_from_inside_an_entry(self):
+        self.cd(os.path.join(self.main, "250003-nry", "sub"))
+        rc, out, _ = self.run_cli("entries")
+        self.assertEqual(rc, 0)
+        self.assertEqual(out, """\
+Entries of ~/Main/Everything (6 entries)
+
+ENTRY       DESCRIPTION  TAGS
+250001
+250002-nry  first_note   @ai @x
+250003-nry
+260001-abc
+260001-gel  gel_notes
+260002-lnk
+""")
+
+    def test_not_inside_an_everything_dir(self):
+        self.cd(self.p("elsewhere"))
+        rc, out, err = self.run_cli("entries")
+        self.assertEqual((rc, out), (1, ""))
+        self.assertEqual(err, "everything entries: not inside an Everything dir "
+                              "(cd into one, or use --all)\n")
+
+    def test_size_sorts_largest_first(self):
+        rc, out, _ = self.run_cli("entries", "--size")
+        self.assertEqual(rc, 0)
+        lines = out.splitlines()
+        link = os.lstat(os.path.join(self.main, "260002-lnk")).st_size
+        self.assertEqual(lines[0], "Entries of ~/Main/Everything (6 entries, 3.1K total)")
+        self.assertEqual(lines[2].split(), ["ENTRY", "SIZE", "DESCRIPTION", "TAGS"])
+        self.assertEqual([line.split()[:2] for line in lines[3:]], [
+            ["250003-nry", "3.0K"], ["260002-lnk", f"{link}B"],  # link itself, not target
+            ["250001", "0B"], ["250002-nry", "0B"], ["260001-abc", "0B"], ["260001-gel", "0B"]])
+
+    def test_all_from_anywhere(self):
+        self.cd(self.p("elsewhere"))
+        rc, out, _ = self.run_cli("entries", "--all")
+        self.assertEqual(rc, 0)
+        self.assertEqual(out, """\
+Entries of every Everything dir under ~ (7 entries in 3 dirs)
+
+ENTRY       DESCRIPTION  TAGS    EVERYTHING DIR
+250001                           ~/Main/Everything
+250001-sub                       ~/Main/Everything/250001/sub-everything
+250002-nry  first_note   @ai @x  ~/Main/Everything
+250003-nry                       ~/Main/Everything
+260001-abc                       ~/Main/Everything
+260001-gel  gel_notes            ~/Main/Everything
+260002-lnk                       ~/Main/Everything
+""")
+
+    def test_empty_dir(self):
+        self.cd(self.p("Archive", "old_everything"))
+        rc, out, _ = self.run_cli("entries")
+        self.assertEqual((rc, out), (0, "Entries of ~/Archive/old_everything (0 entries)\n"))
+
+    def test_read_only(self):
+        def snapshot():
+            return sorted(os.path.join(d, n) for d, dn, fn in os.walk(self.home) for n in dn + fn)
+        before = snapshot()
+        with contextlib.redirect_stdout(io.StringIO()):
+            cli.main(["entries", "--size"])
+            cli.main(["entries", "--all", "--size"])
+        self.assertEqual(snapshot(), before)
+
+    def test_lse_alias(self):
+        alias = os.path.join(REPO, "modules", "base", ".config", "dotfiles", "aliases.d", "base.sh")
+        with open(alias) as f:
+            self.assertIn("alias lse='everything entries'", f.read())
+
+
 class NewCommandTest(TreeTest):
     def setUp(self):
         super().setUp()

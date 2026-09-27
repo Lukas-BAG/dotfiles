@@ -85,3 +85,42 @@ def list_sidecars(everything_dir: str) -> list[SidecarName]:
     except OSError:
         return []
     return [s for s in map(parse_sidecar, sorted(names)) if s]
+
+
+def sidecars_by_entry(everything_dir: str) -> dict[str, list[SidecarName]]:
+    """Sidecars directly inside `everything_dir`, grouped by their entry name."""
+    grouped: dict[str, list[SidecarName]] = {}
+    for s in list_sidecars(everything_dir):
+        grouped.setdefault(s.entry.name, []).append(s)
+    return grouped
+
+
+def tree_size(path: str) -> int:
+    """Apparent size in bytes of everything under `path`, like `du -sb`.
+
+    Never follows symlinks: a symlink counts as its own (small) size, also
+    when `path` itself is one. Unreadable dirs are skipped silently.
+    """
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return 0
+    if not os.path.isdir(path) or os.path.islink(path):
+        return st.st_size
+    total = 0
+    stack = [path]
+    while stack:
+        try:
+            with os.scandir(stack.pop()) as it:
+                children = list(it)
+        except OSError:
+            continue
+        for child in children:
+            try:
+                if child.is_dir(follow_symlinks=False):
+                    stack.append(child.path)
+                else:
+                    total += child.stat(follow_symlinks=False).st_size
+            except OSError:
+                continue
+    return total

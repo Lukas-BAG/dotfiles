@@ -45,9 +45,11 @@ def make_tree(home):
 
     for skipped in [(".git", "Everything"), ("proj", "node_modules", "Everything"),
                     (".cache", "Everything"), (".claude", "projects", "-home-Everything"),
-                    (".local", "share", "Trash", "Everything")]:
+                    (".local", "share", "Trash", "Everything"), (".claude", "Everything"),
+                    (".local", "share", "containers", "Everything"),
+                    ("proj", ".venv", "Everything"), ("proj", "site-packages", "Everything")]:
         mkdir(*skipped)
-    mkdir(".claude", "Everything-kept")  # only .claude/projects is skipped
+    touch("proj", ".venv", "pyvenv.cfg")
     os.symlink(main, os.path.join(home, "LinkToEverything"))  # symlinks aren't followed
     touch("everything.txt")  # files never match
 
@@ -64,6 +66,10 @@ class TreeTest(unittest.TestCase):
         patcher = mock.patch.dict(os.environ, env)
         patcher.start()
         self.addCleanup(patcher.stop)
+        # keep default-root runs off the real system; subprocesses pass --root instead
+        patcher = mock.patch.object(cli, "DEFAULT_ROOT", self.home)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.addCleanup(self._tmp.cleanup)
 
     def p(self, *parts):
@@ -73,7 +79,6 @@ class TreeTest(unittest.TestCase):
 class DiscoveryTest(TreeTest):
     def test_finds_matches_and_skips_pruned_and_symlinks(self):
         self.assertEqual(discovery.find_everything_dirs(self.home, self.home), [
-            self.p(".claude", "Everything-kept"),
             self.p("Archive", "old_everything"),
             self.p("Main", "Everything"),
             self.p("Main", "Everything", "250001", "sub-everything"),
@@ -89,6 +94,38 @@ class DiscoveryTest(TreeTest):
         self.assertFalse([d for d in found if "/.claude/projects" in d], found)
         self.assertIn(os.path.join(archived, "Main", "Everything"), found)
         self.assertIn(os.path.join(archived, "projects", "everything-kept"), found)
+
+    def test_system_and_scratch_dirs_pruned(self):
+        skip = discovery.skip_paths(self.home)
+        for path in ["/proc", "/usr", "/lib64", "/var/lib", "/snap", "/tmp/claude-1000",
+                     self.p(".claude"), self.p(".local", "share")]:
+            self.assertTrue(discovery._pruned(path, skip), path)
+        for path in ["/var", "/var/tmp", "/tmp", "/tmp/x/claude-1", "/mnt", "/media",
+                     self.p(".local"), self.p("Main")]:
+            self.assertFalse(discovery._pruned(path, skip), path)
+
+    def test_explicit_root_is_searched_even_if_pruned(self):
+        found = discovery.find_everything_dirs(self.p(".claude"), self.home)
+        self.assertEqual(found, [self.p(".claude", "Everything")])  # projects still pruned
+        self.assertEqual(discovery.find_everything_dirs(self.p("proj", ".venv"), self.home),
+                         [self.p("proj", ".venv", "Everything")])
+
+    def test_mounts(self):
+        for d in ["disk", "net", "pseudo", "my disk"]:
+            os.makedirs(self.p("mnt", d, "Everything"))
+        mounts = self.p("mounts")
+        with open(mounts, "w") as f:
+            f.write(f"/dev/sdb1 {self.p('mnt', 'disk')} ext4 rw 0 0\n"
+                    f"srv:/x {self.p('mnt', 'net')} nfs4 rw 0 0\n"
+                    f"proc {self.p('mnt', 'pseudo')} proc rw 0 0\n"
+                    f"host:/y {self.p('mnt')}/my\\040disk fuse.sshfs rw 0 0\n")
+
+        def find(network=False):
+            return discovery.find_everything_dirs(self.p("mnt"), self.home, network, mounts)
+        self.assertEqual(find(), [self.p("mnt", "disk", "Everything")])
+        self.assertEqual(find(network=True), [self.p("mnt", d, "Everything")
+                                              for d in ["disk", "my disk", "net"]])
+        self.assertEqual(discovery.pruned_mounts(True, self.p("no-such-file")), set())
 
     def test_root_itself_can_match(self):
         root = self.p("Main", "Everything")
@@ -180,10 +217,9 @@ class ListCommandTest(TreeTest):
         rc, out, _ = self.run_cli("list")
         self.assertEqual(rc, 0)
         self.assertEqual(out, """\
-Everything dirs under ~ (4 found, 1 nested)
+Everything dirs under ~ (3 found, 1 nested)
 
   PATH                                         ENTRIES  NEWEST        SUFFIX
-  ~/.claude/Everything-kept                          0  -             -
   ~/Archive/old_everything                           0  -             -
 * ~/Main/Everything                                  6  260002-lnk    (none),nry,abc,gel,lnk
     └ ~/Main/Everything/250001/sub-everything        1  250001-sub    sub
@@ -219,7 +255,7 @@ Everything dirs under ~ (4 found, 1 nested)
         self.assertIn("no Everything dirs under ~/elsewhere", err)
 
     def test_shim_runs_from_repo(self):
-        res = subprocess.run([SHIM, "list", "--paths"], capture_output=True, text=True,
+        res = subprocess.run([SHIM, "list", "--paths", "--root", self.home], capture_output=True, text=True,
                              env={**os.environ, "HOME": self.home})
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertIn(self.p("Main", "Everything"), res.stdout.splitlines())
@@ -289,7 +325,7 @@ class PickCommandTest(TreeTest):
     def test_cde_changes_dir(self):
         functions = os.path.join(REPO, "modules", "base", ".config", "dotfiles",
                                  "functions.d", "base.sh")
-        script = f'everything() {{ "{SHIM}" "$@"; }}; source "{functions}"; cde archive && pwd'
+        script = f'everything() {{ "{SHIM}" "$@"; }}; source "{functions}"; cde --root "$HOME" archive && pwd'
         res = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
                              env={**os.environ, "HOME": self.home})
         self.assertEqual(res.returncode, 0, res.stderr)
@@ -442,7 +478,7 @@ class GotoCommandTest(TreeTest):
         self.assertEqual((res.returncode, res.stdout, res.stderr),
                          (0, self.p(self.main, "250002-nry") + "\n",
                           "ge: 250002-nry_first_note_@ai_@x\n"))
-        res = self.run_bash("ge --all campfire && pwd")
+        res = self.run_bash(f"ge --all --root {self.home} campfire && pwd")
         self.assertEqual(res.stdout, self.p(self.sub, "250001-sub") + "\n")
         res = self.run_bash("ge && pwd")
         self.assertEqual(res.stdout, self.main + "\n")
@@ -567,7 +603,7 @@ TAGS  (0 of 0 sidecars tagged)
   -
 """)
         _, out, _ = self.run_cli("stats", "--per-dir")
-        self.assertEqual(out.count("Everything stats for "), 4)
+        self.assertEqual(out.count("Everything stats for "), 3)
         self.assertIn("Everything stats for ~/Main/Everything/250001/sub-everything"
                       "  (1 dir, 1 entry, 0 sidecars)", out)
 
@@ -592,7 +628,7 @@ TAGS  (0 of 0 sidecars tagged)
         self.assertEqual(suffixes[None]["entries"], 1)  # no suffix is null, not "(none)"
         self.assertEqual(data["tags"], {"ai": 2, "x": 1, "y": 1})
         _, out, _ = self.run_cli("stats", "--json", "--per-dir")
-        self.assertEqual([len(d["dirs"]) for d in json.loads(out)], [1, 1, 1, 1])
+        self.assertEqual([len(d["dirs"]) for d in json.loads(out)], [1, 1, 1])
 
     def test_dir_no_match(self):
         rc, out, err = self.run_cli("stats", "--dir", "zzz")
@@ -665,7 +701,13 @@ class CacheTest(TreeTest):
         dirs, age = self.find(self.p("Archive"))
         self.assertIsNone(age)
         self.assertEqual(dirs, [self.p("Archive", "old_everything")])
-        self.assertEqual(len(self.find()[0]), 4)
+        self.assertEqual(len(self.find()[0]), 3)
+
+    def test_separate_entry_per_network_flag(self):
+        self.find()
+        dirs, age = discovery.find_everything_dirs_cached(self.home, self.home, network=True)
+        self.assertIsNone(age)
+        self.assertEqual(dirs, self.find()[0])
 
     def test_corrupt_cache_is_ignored(self):
         path = discovery.cache_file(self.home)
@@ -809,7 +851,7 @@ class CheckTest(TreeTest):
         self.assertEqual(rc, 1)
         self.assertIn("~/Main/Everything\n", out)
         self.assertNotIn("~/Clean-Everything", out)
-        self.assertRegex(out.splitlines()[-1], r"^6 Everything dirs checked under ~: ")
+        self.assertRegex(out.splitlines()[-1], r"^5 Everything dirs checked under ~: ")
 
     def test_json(self):
         rc, out, _ = self.run_cli("check", "--dir", "check-everything", "--json")

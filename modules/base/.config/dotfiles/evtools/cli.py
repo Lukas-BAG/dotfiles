@@ -31,7 +31,8 @@ def _discover(args: argparse.Namespace, prog: str) -> tuple[str, list[str]] | No
         print(f"{prog}: not a dir: {args.root}", file=sys.stderr)
         return None
     root = os.path.realpath(args.root)
-    dirs, age = discovery.find_everything_dirs_cached(root, home, fresh=args.fresh)
+    dirs, age = discovery.find_everything_dirs_cached(root, home, fresh=args.fresh,
+                                                     network=args.network)
     if age is not None:
         print(f"{prog}: using cached Everything-dir list ({_age(age)} old; "
               "--fresh to re-search)", file=sys.stderr)
@@ -357,6 +358,12 @@ def cmd_check(args: argparse.Namespace) -> int:
     return 1 if counts else 0
 
 
+# searched when --root isn't given (tests point this at a fake tree)
+DEFAULT_ROOT = "/"
+NETWORK_HELP = ("also search network filesystems (nfs, cifs, sshfs, ...); local mounts are "
+                "always searched")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="everything", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True, metavar="<command>")
@@ -367,8 +374,9 @@ def build_parser() -> argparse.ArgumentParser:
                        "entry count, newest entry and suffixes. Dirs nested in another "
                        "listed dir are indented; \"*\" marks the \"e\" bashmark used by ge. "
                        "Read-only.")
-    p.add_argument("--root", default=os.path.expanduser("~"),
-                   help="where to search (default: $HOME)")
+    p.add_argument("--root", default=DEFAULT_ROOT,
+                   help="where to search (default: /)")
+    p.add_argument("--network", action="store_true", help=NETWORK_HELP)
     p.add_argument("--fresh", action="store_true",
                    help="ignore the cached Everything-dir list (up to 6 h old) and search again "
                         "(no-op while the cache is disabled)")
@@ -382,8 +390,9 @@ def build_parser() -> argparse.ArgumentParser:
                        "contains it (any case). A single candidate is printed directly, "
                        "several are offered in fzf. Read-only; cde wraps this to cd there.")
     p.add_argument("text", nargs="?", help="case-insensitive substring of the path")
-    p.add_argument("--root", default=os.path.expanduser("~"),
-                   help="where to search (default: $HOME)")
+    p.add_argument("--root", default=DEFAULT_ROOT,
+                   help="where to search (default: /)")
+    p.add_argument("--network", action="store_true", help=NETWORK_HELP)
     p.add_argument("--fresh", action="store_true",
                    help="ignore the cached Everything-dir list (up to 6 h old) and search again "
                         "(no-op while the cache is disabled)")
@@ -402,8 +411,9 @@ def build_parser() -> argparse.ArgumentParser:
     scope.add_argument("-a", "--all", action="store_true",
                        help="search every Everything dir under --root, not just the bashmark")
     scope.add_argument("--dir", help="search this dir instead of the bashmark (used by gel)")
-    p.add_argument("--root", default=os.path.expanduser("~"),
-                   help="where --all searches for Everything dirs (default: $HOME)")
+    p.add_argument("--root", default=DEFAULT_ROOT,
+                   help="where --all searches for Everything dirs (default: /)")
+    p.add_argument("--network", action="store_true", help=NETWORK_HELP)
     p.add_argument("--fresh", action="store_true",
                    help="with --all, ignore the cached Everything-dir list (no-op while the "
                         "cache is disabled)")
@@ -417,8 +427,9 @@ def build_parser() -> argparse.ArgumentParser:
                        "suffix (split by year, since seq restarts every year) and tag usage. "
                        "One combined total by default. Read-only; problems such as missing "
                        "sidecars are left to the checker.")
-    p.add_argument("--root", default=os.path.expanduser("~"),
-                   help="where to search (default: $HOME)")
+    p.add_argument("--root", default=DEFAULT_ROOT,
+                   help="where to search (default: /)")
+    p.add_argument("--network", action="store_true", help=NETWORK_HELP)
     p.add_argument("--fresh", action="store_true",
                    help="ignore the cached Everything-dir list (up to 6 h old) and search again "
                         "(no-op while the cache is disabled)")
@@ -439,8 +450,9 @@ def build_parser() -> argparse.ArgumentParser:
                        "medium; minor slips (no tags, a tag without \"@\", tags differing "
                        "only in case, ...) only show with --all-levels. Exits 1 if anything "
                        "is shown. Read-only.")
-    p.add_argument("--root", default=os.path.expanduser("~"),
-                   help="where to search (default: $HOME)")
+    p.add_argument("--root", default=DEFAULT_ROOT,
+                   help="where to search (default: /)")
+    p.add_argument("--network", action="store_true", help=NETWORK_HELP)
     p.add_argument("--fresh", action="store_true",
                    help="ignore the cached Everything-dir list (up to 6 h old) and search again "
                         "(no-op while the cache is disabled)")

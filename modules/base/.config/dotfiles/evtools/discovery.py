@@ -11,62 +11,109 @@ import tempfile
 import time
 
 # pruned wherever they appear: neither listed nor descended into
-SKIP_NAMES = {".git", "node_modules", ".cache"}
+SKIP_NAMES = {".git", "node_modules", ".cache", "site-packages", "dist-packages"}
+
+# system and package dirs: nothing of the user's lives there
+SYSTEM_DIRS = {"/proc", "/sys", "/dev", "/run", "/usr", "/lib", "/lib32", "/lib64", "/libx32",
+               "/bin", "/sbin", "/boot", "/etc", "/opt", "/var/lib", "/snap"}
+
+# kernel/pseudo filesystems, pruned wherever they are mounted
+PSEUDO_FSTYPES = {"proc", "sysfs", "devtmpfs", "devpts", "cgroup", "cgroup2", "securityfs",
+                  "debugfs", "tracefs", "pstore", "bpf", "mqueue", "hugetlbfs", "configfs",
+                  "fusectl", "binfmt_misc", "autofs", "efivarfs", "rpc_pipefs", "nsfs",
+                  "selinuxfs"}
+
+# network filesystems: slow to walk and maybe offline, so only searched with network=True
+NETWORK_FSTYPES = {"nfs", "nfs4", "cifs", "smb3", "smbfs", "ncpfs", "afs", "ceph", "glusterfs",
+                   "lustre", "davfs", "sshfs", "fuse.sshfs", "fuse.rclone", "fuse.s3fs",
+                   "fuse.gcsfuse", "fuse.glusterfs", "fuse.ceph-fuse", "fuse.davfs2",
+                   "fuse.curlftpfs", "fuse.smbnetfs"}
+
+MOUNTS_FILE = "/proc/self/mounts"
 
 
 def skip_paths(home: str) -> set[str]:
-    return {os.path.join(home, ".local", "share", "Trash")}
+    home = os.path.realpath(home)
+    # all of ~/.claude (projects, todos, shell snapshots, ...) and ~/.local/share
+    # (Trash, rootless Docker/containers storage, app data)
+    return SYSTEM_DIRS | {os.path.join(home, ".claude"), os.path.join(home, ".local", "share")}
+
+
+def _unescape_mount(field: str) -> str:
+    # /proc/self/mounts writes space, tab, newline and backslash as \ooo
+    return re.sub(r"\\([0-7]{3})", lambda m: chr(int(m[1], 8)), field)
+
+
+def pruned_mounts(network: bool = False, mounts_file: str = MOUNTS_FILE) -> set[str]:
+    """Mount points of pseudo filesystems, plus network ones unless `network`.
+
+    Read from /proc/self/mounts; empty if that can't be read (not Linux).
+    """
+    skip = PSEUDO_FSTYPES if network else PSEUDO_FSTYPES | NETWORK_FSTYPES
+    try:
+        with open(mounts_file) as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return set()
+    found = set()
+    for line in lines:
+        fields = line.split()
+        if len(fields) >= 3 and fields[2] in skip:
+            found.add(_unescape_mount(fields[1]))
+    return found
 
 
 def _pruned(path: str, skip: set[str]) -> bool:
     name = os.path.basename(path)
+    parent = os.path.dirname(path)
     # <any>/.claude/projects holds one "-home-...-Everything-..." dir per Claude
     # session, also in archived homes and the dotfiles ai module
-    claude_projects = name == "projects" and os.path.basename(os.path.dirname(path)) == ".claude"
-    return name in SKIP_NAMES or path in skip or claude_projects
+    claude_projects = name == "projects" and os.path.basename(parent) == ".claude"
+    # Claude Code's per-session scratch dirs, named after the project path
+    claude_tmp = parent == "/tmp" and name.startswith("claude-")
+    return name in SKIP_NAMES or path in skip or claude_projects or claude_tmp
 
 
 def is_everything_name(name: str) -> bool:
     return "everything" in name.casefold()
 
 
-def find_everything_dirs(root: str, home: str | None = None) -> list[str]:
+def find_everything_dirs(root: str, home: str | None = None, network: bool = False,
+                         mounts_file: str = MOUNTS_FILE) -> list[str]:
     """All Everything dirs under `root` (including `root` itself), sorted.
 
-    Never follows symlinks and stays on root's filesystem (a mount point is
-    still listed if it matches, just not descended into). Unreadable dirs
-    are skipped silently. Read-only.
+    Never follows symlinks. Crosses into other local filesystems, but not into
+    pseudo filesystems, or network ones unless `network`. System dirs, tool
+    scratch dirs and Python venvs are pruned too (see skip_paths/_pruned);
+    `root` itself is always searched, even if it is one of them. Unreadable
+    dirs are skipped silently. Read-only.
     """
     home = home if home is not None else os.path.expanduser("~")
-    skip = skip_paths(home)
+    skip = skip_paths(home) | pruned_mounts(network, mounts_file)
     root = os.path.normpath(root)
-    root_dev = os.lstat(root).st_dev
 
     found = []
     stack = [root]
     while stack:
         path = stack.pop()
-        name = os.path.basename(path) or path
-        if _pruned(path, skip):
+        if path != root and _pruned(path, skip):
             continue
-        if is_everything_name(name):
-            found.append(path)
         try:
             with os.scandir(path) as it:
                 children = list(it)
         except OSError:
+            children = []
+        # a Python venv (marked by pyvenv.cfg): pruned like the dirs above
+        if path != root and any(c.name == "pyvenv.cfg" for c in children):
             continue
+        if is_everything_name(os.path.basename(path) or path):
+            found.append(path)
         for child in children:
             try:
-                if not child.is_dir(follow_symlinks=False):
-                    continue
-                if child.stat(follow_symlinks=False).st_dev != root_dev:
-                    if not _pruned(child.path, skip) and is_everything_name(child.name):
-                        found.append(child.path)
-                    continue
+                if child.is_dir(follow_symlinks=False):
+                    stack.append(child.path)
             except OSError:
                 continue
-            stack.append(child.path)
     return sorted(found)
 
 
@@ -77,7 +124,7 @@ CACHE_ENABLED = False
 # Everything dirs are rarely created, so a search result this old is still good
 CACHE_TTL = 6 * 60 * 60
 # part of the cache key: bump when discovery rules change, so old results aren't reused
-CACHE_VERSION = 1
+CACHE_VERSION = 2
 
 
 def cache_file(home: str | None = None) -> str:
@@ -111,7 +158,7 @@ def _write_cache(path: str, data: dict) -> None:
 
 
 def find_everything_dirs_cached(root: str, home: str | None = None, fresh: bool = False,
-                                ) -> tuple[list[str], float | None]:
+                                network: bool = False) -> tuple[list[str], float | None]:
     """find_everything_dirs() through a cache in ~/.cache/dotfiles/.
 
     Returns (dirs, age): age is the cache entry's age in seconds, or None if
@@ -122,10 +169,10 @@ def find_everything_dirs_cached(root: str, home: str | None = None, fresh: bool 
     """
     home = home if home is not None else os.path.expanduser("~")
     if not CACHE_ENABLED:
-        return find_everything_dirs(root, home), None
+        return find_everything_dirs(root, home, network), None
     root = os.path.normpath(root)
     path = cache_file(home)
-    key = json.dumps({"v": CACHE_VERSION, "root": root}, sort_keys=True)
+    key = json.dumps({"v": CACHE_VERSION, "root": root, "network": network}, sort_keys=True)
     data = _read_cache(path)
     now = time.time()
 
@@ -139,7 +186,7 @@ def find_everything_dirs_cached(root: str, home: str | None = None, fresh: bool 
         if age is not None and 0 <= age < CACHE_TTL:
             return [d for d in dirs if os.path.isdir(d)], age
 
-    dirs = find_everything_dirs(root, home)
+    dirs = find_everything_dirs(root, home, network)
     data[key] = {"time": now, "dirs": dirs}
     _write_cache(path, data)
     return dirs, None

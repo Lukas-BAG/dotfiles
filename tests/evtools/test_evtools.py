@@ -705,10 +705,6 @@ class CacheDisabledTest(TreeTest):
         self.assertFalse(os.path.exists(self.p(".cache", "dotfiles")))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class CheckTest(TreeTest):
     run_cli = ListCommandTest.run_cli
 
@@ -848,3 +844,6 @@ class CheckTest(TreeTest):
                 self.run_cli("check", *args)
         self.assertEqual(snapshot(), before)
 
+
+if __name__ == "__main__":
+    unittest.main()

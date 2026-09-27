@@ -45,8 +45,18 @@ PERSISTENT_FILES = [
 # as a real dir forces stow to fold: it links only the individual files the
 # module actually owns (e.g. settings.json) and leaves the rest of the
 # directory alone.
+#
+# Same for ~/.config/systemd/user (`systemctl --user enable/edit` writes
+# wants-links and drop-in overrides there) and ~/.local/bin (pip/pipx,
+# installers). Stow folds at the highest missing directory, so listing the
+# deepest dir is enough: its parents get pre-created too.
 NON_FOLDING_DIRS = {
-    "ai": ["~/.claude"],
+    "ai": ["~/.claude", "~/.local/bin"],
+    "base": ["~/.local/bin"],
+    "services": [
+        "~/.config/systemd/user/timers.target.wants",
+        "~/.local/bin",
+    ],
 }
 
 
@@ -63,10 +73,34 @@ class StowHelper:
                 open(filepath, "a").close()
                 print(f"Created persistent file: {filepath}")
 
+    def unfold_existing(self, path, home_modules):
+        """Remove a stow fold at `path` or one of its parents below $HOME.
+
+        A fold is a directory symlink into one of the selected modules, left
+        behind by an earlier stow run (before the dir was in NON_FOLDING_DIRS).
+        Unlinking it loses nothing: the files live in the module and get
+        linked back one by one by the stow run that follows.
+        """
+        home = os.path.realpath(os.path.expanduser("~"))
+        module_roots = [os.path.realpath(os.path.join(MODULES_DIR, m)) for m in home_modules]
+        current = path
+        while True:
+            parent = os.path.dirname(current)
+            if os.path.islink(current):
+                target = os.path.realpath(current)
+                if any(os.path.commonpath([target, root]) == root for root in module_roots):
+                    os.unlink(current)
+                    print(f"Unfolded {current} (was a stow symlink to {target})")
+                return
+            if parent == current or os.path.realpath(parent) == home:
+                return
+            current = parent
+
     def ensure_non_folding_dirs(self, home_modules):
         for module in home_modules:
             for dir_path in NON_FOLDING_DIRS.get(module, []):
                 expanded = os.path.expanduser(dir_path)
+                self.unfold_existing(expanded, home_modules)
                 if os.path.lexists(expanded):
                     continue
                 os.makedirs(expanded)

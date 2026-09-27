@@ -17,7 +17,7 @@ from unittest import mock
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(REPO, "modules", "base", ".config", "dotfiles"))
 
-from evtools import cli, discovery, entries, goto, stats  # noqa: E402
+from evtools import check, cli, discovery, entries, goto, stats  # noqa: E402
 
 SHIM = os.path.join(REPO, "modules", "base", ".local", "bin", "everything")
 
@@ -707,3 +707,144 @@ class CacheDisabledTest(TreeTest):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CheckTest(TreeTest):
+    run_cli = ListCommandTest.run_cli
+
+    def setUp(self):
+        super().setUp()
+        self.d = self.p("Check-Everything")
+        os.mkdir(self.d)
+        for name in ["260001-ok", "260002-nosc", "260003-two", "260004-txt", "260005-a",
+                     "260006-dup", "260006-DUP", "temp", "notes", "260007-x_desc"]:
+            os.mkdir(os.path.join(self.d, name))
+        for name in ["260001-ok_fine_@ai.md", "260003-two_one.md", "260003-two_other.md",
+                     "260004-txt_with spaces_@ai.txt", "260006-dup_x_@ai.md",
+                     "260005-b_orphan_@ai.md", "269999_lost_@ai.md",
+                     ".mynew-suffix", "README.md", "260005-a.md", ".DS_Store"]:
+            open(os.path.join(self.d, name), "w").close()
+
+    def found(self, dirs=None):
+        (r,) = check.check([dirs or self.d])
+        return {(f.severity, f.code, f.name) for f in r.findings}
+
+    def test_required_checks(self):
+        got = {x for x in self.found() if x[0] != check.MINOR}
+        self.assertEqual(got, {
+            # naming: temp and .mynew-suffix are skipped, everything else checked
+            ("major", "bad-dir-name", "notes"),
+            ("major", "dir-name-not-id", "260007-x_desc"),
+            ("major", "bad-file-name", "README.md"),
+            ("major", "bad-file-name", "260005-a.md"),
+            ("major", "bad-file-name", ".DS_Store"),
+            # dir side
+            ("major", "no-sidecar", "260002-nosc"),
+            ("major", "no-sidecar", "260005-a"),
+            ("medium", "several-sidecars", "260003-two"),
+            # sidecar side; names match ignoring case, so both dup dirs share one sidecar
+            ("medium", "orphan-sidecar", "260005-b_orphan_@ai.md"),
+            ("medium", "orphan-sidecar", "269999_lost_@ai.md"),
+            ("major", "several-dirs", "260006-dup_x_@ai.md"),
+            ("medium", "not-md", "260004-txt_with spaces_@ai.txt"),
+        })
+
+    def test_orphan_names_same_id(self):
+        (r,) = check.check([self.d])
+        msg = next(f.message for f in r.findings if f.name == "260005-b_orphan_@ai.md")
+        self.assertEqual(msg, "no dir 260005-b for this sidecar (same id: 260005-a)")
+
+    def test_clean_dir(self):
+        d = self.p("Clean-Everything")
+        os.makedirs(os.path.join(d, "260001-a"))
+        os.makedirs(os.path.join(d, "temp"))
+        open(os.path.join(d, "260001-a_all good_@x.md"), "w").close()
+        open(os.path.join(d, ".mynew-suffix"), "w").close()
+        self.assertEqual(self.found(d), set())
+
+    def test_minor_checks(self):
+        d = self.p("Minor-Everything")
+        names = ["260001-a_plain.md", "260002-a_@ai.md", "260003-a_project_ai.md",
+                 "260004-a_x_@AI.md", "260005-a_y_@ai .md", "260006-a_z_@.md",
+                 "260007-a_about_@rust.md", "260008-a_learning_rust.md"]
+        os.mkdir(d)
+        for n in names:
+            os.mkdir(os.path.join(d, n[:8]))
+            open(os.path.join(d, n), "w").close()
+        self.assertEqual(self.found(d), {
+            ("minor", "no-tags", "260001-a_plain.md"),
+            ("minor", "no-description", "260002-a_@ai.md"),  # its tag still counts
+            ("minor", "no-tags", "260003-a_project_ai.md"),
+            ("minor", "tag-without-at", "260003-a_project_ai.md"),  # short last word
+            ("minor", "tag-case", "260004-a_x_@AI.md"),  # @ai is used more often
+            ("minor", "tag-trailing-space", "260005-a_y_@ai .md"),
+            ("minor", "empty-tag", "260006-a_z_@.md"),
+            ("minor", "no-tags", "260006-a_z_@.md"),
+            ("minor", "no-tags", "260008-a_learning_rust.md"),
+            ("minor", "tag-without-at", "260008-a_learning_rust.md"),  # "rust" is a known tag
+        })
+
+    def test_unreadable_dir(self):
+        with mock.patch.object(check, "_scan", return_value=None):
+            self.assertEqual(self.found(), {("major", "unreadable", ".")})
+
+    def test_text_output_and_exit_code(self):
+        rc, out, _ = self.run_cli("check", "--dir", "check-everything")
+        self.assertEqual(rc, 1)
+        self.assertIn("~/Check-Everything\n  MAJOR\n", out)
+        self.assertIn("\n  MEDIUM\n", out)
+        self.assertNotIn("MINOR", out)
+        self.assertIn("    notes" + " " * 27 + "dir name isn't a <yy><seq>[-suffix] id\n", out)
+        self.assertRegex(out.splitlines()[-1],
+                         r"^1 Everything dir checked \(matching 'check-everything'\) under ~: "
+                         r"8 major, 4 medium; 0 clean \(\d+ minor hidden, --all-levels to show\)$")
+        rc, out, _ = self.run_cli("check", "--dir", "check-everything", "--all-levels")
+        self.assertIn("\n  MINOR\n", out)
+        self.assertNotIn("hidden", out)
+
+    def test_all_dirs_and_clean_exit(self):
+        d = self.p("Clean-Everything")
+        os.makedirs(os.path.join(d, "260001-a"))
+        open(os.path.join(d, "260001-a_ok_@x.md"), "w").close()
+        rc, out, _ = self.run_cli("check", "--dir", "clean-everything")
+        self.assertEqual((rc, out), (0, "1 Everything dir checked (matching 'clean-everything') "
+                                        "under ~: 0 major, 0 medium; 1 clean\n"))
+        rc, out, _ = self.run_cli("check")  # every discovered dir, clean ones not listed
+        self.assertEqual(rc, 1)
+        self.assertIn("~/Main/Everything\n", out)
+        self.assertNotIn("~/Clean-Everything", out)
+        self.assertRegex(out.splitlines()[-1], r"^6 Everything dirs checked under ~: ")
+
+    def test_json(self):
+        rc, out, _ = self.run_cli("check", "--dir", "check-everything", "--json")
+        data = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertEqual(data["counts"], {"major": 8, "medium": 4})
+        self.assertGreater(data["hidden"], 0)
+        (entry,) = data["dirs"]
+        self.assertEqual(entry["dir"], self.d)
+        self.assertEqual(entry["findings"][0], {
+            "severity": "major", "code": "bad-file-name", "name": ".DS_Store",
+            "message": "file name doesn't start with <yy><seq>[-suffix]_<description>"})
+        rc, out, _ = self.run_cli("check", "--dir", "check-everything", "--json", "--all-levels")
+        self.assertIn("minor", json.loads(out)["counts"])
+
+    def test_dir_no_match(self):
+        rc, out, err = self.run_cli("check", "--dir", "zzz")
+        self.assertEqual((rc, out), (1, ""))
+        self.assertIn("everything check: no Everything dir matching 'zzz'", err)
+
+    def test_read_only(self):
+        cache_dir = os.path.dirname(discovery.cache_file(self.home))
+        os.makedirs(cache_dir)
+
+        def snapshot():
+            return sorted((os.path.join(d, n), os.lstat(os.path.join(d, n)).st_mtime_ns)
+                          for d, dn, fn in os.walk(self.home) if not d.startswith(cache_dir)
+                          for n in dn + fn if os.path.join(d, n) != cache_dir)
+        before = snapshot()
+        with mock.patch.object(discovery, "CACHE_ENABLED", True):
+            for args in [(), ("--all-levels",), ("--json",)]:
+                self.run_cli("check", *args)
+        self.assertEqual(snapshot(), before)
+

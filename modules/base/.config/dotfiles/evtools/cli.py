@@ -6,8 +6,9 @@ import os
 import shutil
 import subprocess
 import sys
+from collections import Counter
 
-from . import discovery, entries, goto, stats
+from . import check, discovery, entries, goto, stats
 
 
 def _tilde(path: str, home: str) -> str:
@@ -299,6 +300,63 @@ def cmd_stats(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_check(args: argparse.Namespace) -> int:
+    """Report naming problems in Everything dirs; exit 1 if any are shown."""
+    prog = "everything check"
+    found = _discover(args, prog)
+    if found is None:
+        return 1
+    root, dirs = found
+    dirs = _matching(dirs, args.dir)
+    if not dirs:
+        print(f"{prog}: no Everything dir matching '{args.dir}'", file=sys.stderr)
+        return 1
+
+    levels = check.SEVERITIES if args.all_levels else (check.MAJOR, check.MEDIUM)
+    results = check.check(dirs)
+    shown = [(r.dir, r.shown(levels)) for r in results]
+    counts = Counter(f.severity for _, fs in shown for f in fs)
+    hidden = sum(f.severity not in levels for r in results for f in r.findings)
+
+    if args.json:
+        print(json.dumps({
+            "dirs": [{"dir": d, "findings": [f.to_json() for f in fs]} for d, fs in shown],
+            "counts": {s: counts[s] for s in levels},
+            "hidden": hidden,
+        }, indent=2, ensure_ascii=False))
+        return 1 if counts else 0
+
+    home = os.path.expanduser("~")
+    blocks = []
+    for d, fs in shown:
+        if not fs:
+            continue
+        lines = [_tilde(d, home) if d != home else d]
+        # capped so one long sidecar name doesn't push every message far right
+        width = min(40, max(len(f.name) for f in fs))
+        for severity in levels:
+            group = [f for f in fs if f.severity == severity]
+            if group:
+                lines.append(f"  {severity.upper()}")
+                lines += [f"    {f.name:<{width}}  {f.message}" for f in group]
+        blocks.append("\n".join(lines))
+    if blocks:
+        print("\n\n".join(blocks))
+        print()
+
+    clean = sum(not fs for _, fs in shown)
+    summary = f"{_plural(len(dirs), 'Everything dir')} checked"
+    if args.dir:
+        summary += f" (matching '{args.dir}')"
+    summary += f" under {_tilde(root, home)}: "
+    summary += ", ".join(f"{counts[s]} {s}" for s in levels)
+    summary += f"; {clean} clean"
+    if hidden:
+        summary += f" ({hidden} minor hidden, --all-levels to show)"
+    print(summary)
+    return 1 if counts else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="everything", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True, metavar="<command>")
@@ -371,6 +429,28 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true",
                    help="print JSON instead of text (a list of objects with --per-dir)")
     p.set_defaults(func=cmd_stats)
+
+    p = sub.add_parser("check", help="report naming problems in Everything dirs",
+                       description="Check the names directly inside every Everything dir "
+                       "(skipping \".mynew-suffix\" and \"temp\"): every dir must be a "
+                       "\"<yy><seq>[-suffix]\" id with exactly one "
+                       "\"<id>_<description>[_@tag...].md\" sidecar, and every other file "
+                       "must be such a sidecar with exactly one dir. Problems are major or "
+                       "medium; minor slips (no tags, a tag without \"@\", tags differing "
+                       "only in case, ...) only show with --all-levels. Exits 1 if anything "
+                       "is shown. Read-only.")
+    p.add_argument("--root", default=os.path.expanduser("~"),
+                   help="where to search (default: $HOME)")
+    p.add_argument("--fresh", action="store_true",
+                   help="ignore the cached Everything-dir list (up to 6 h old) and search again "
+                        "(no-op while the cache is disabled)")
+    p.add_argument("--dir", metavar="TEXT",
+                   help="only Everything dirs whose path contains TEXT (any case), as in pick")
+    p.add_argument("--all-levels", action="store_true",
+                   help="also show minor findings")
+    p.add_argument("--json", action="store_true",
+                   help="print JSON instead of text")
+    p.set_defaults(func=cmd_check)
     return parser
 
 

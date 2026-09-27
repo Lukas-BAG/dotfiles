@@ -312,8 +312,9 @@ class StatsTest(TreeTest):
                             self.p("Main", "Everything", "250001", "sub-everything")])
         self.assertEqual((st.entries, st.sidecars, st.tagged_sidecars), (7, 4, 3))
         self.assertEqual(dict(st.by_year), {"25": 4, "26": 3})
-        self.assertEqual(st.shared_ids, {250001: ["(none)", "sub"], 260001: ["abc", "gel"]})
-        self.assertEqual(len(st.ids), 5)
+        # 250001 in Main and 250001-sub in sub-everything are separate ids
+        self.assertEqual(st.shared_ids, {(self.p("Main", "Everything"), 260001): ["abc", "gel"]})
+        self.assertEqual(len(st.ids), 6)
         self.assertEqual([(n, s.entries, s.ranges) for n, s in st.sorted_suffixes()], [
             ("nry", 2, {"25": ("0002", "0003")}),
             ("(none)", 1, {"25": ("0001", "0001")}),
@@ -332,6 +333,22 @@ class StatsTest(TreeTest):
         self.assertEqual(st.suffixes["nry"].ranges,
                          {"24": ("9999", "9999"), "25": ("0003", "0042"),
                           "26": ("0001", "0008")})
+
+    def test_ids_are_per_dir(self):
+        a, b = self.p("Pair", "A-Everything"), self.p("Pair", "B-Everything")
+        for d, names in [(a, ["260001-nry"]), (b, ["260001-nry", "260001-gel", "260002",
+                                                    "260002-x"])]:
+            for name in names:
+                os.makedirs(os.path.join(d, name))
+        st = stats.collect([a, b])
+        self.assertEqual(len(st.ids), 3)
+        self.assertEqual(st.shared_ids, {(b, 260001): ["gel", "nry"], (b, 260002): ["(none)", "x"]})
+        _, out, _ = self.run_cli("stats", "--dir", "pair")
+        self.assertIn("  distinct ids    3   (2 ids are used by several suffixes in the same dir)\n",
+                      out)
+        _, out, _ = self.run_cli("stats", "--json", "--dir", "b-everything")
+        self.assertIn({"dir": b, "id": 260002, "suffixes": [None, "x"]},
+                      json.loads(out)["shared_ids"])
 
     def test_tag_counted_once_per_sidecar(self):
         d = self.p("Dup-Everything")
@@ -355,7 +372,7 @@ Everything stats under ~ matching 'main'  (2 dirs, 7 entries, 4 sidecars)
 
 ENTRIES
   total entries   7
-  distinct ids    5   (2 ids are used by several suffixes)
+  distinct ids    6   (260001 is used by 2 suffixes in ~/Main/Everything: abc, gel)
   by year         2025: 4   2026: 3
 
 SUFFIXES
@@ -407,11 +424,13 @@ TAGS  (0 of 0 sidecars tagged)
         data = json.loads(out)
         self.assertEqual(data["dirs"], [self.p("Main", "Everything"),
                                         self.p("Main", "Everything", "250001", "sub-everything")])
-        self.assertEqual(data["shared_ids"], {"250001": ["(none)", "sub"],
-                                              "260001": ["abc", "gel"]})
+        self.assertEqual(data["shared_ids"], [{"dir": self.p("Main", "Everything"),
+                                               "id": 260001, "suffixes": ["abc", "gel"]}])
         self.assertEqual(data["by_year"], {"2025": 4, "2026": 3})
-        self.assertEqual(data["suffixes"]["nry"], {"entries": 2,
-                                                   "ranges": {"2025": ["0002", "0003"]}})
+        suffixes = {s["suffix"]: s for s in data["suffixes"]}
+        self.assertEqual(suffixes["nry"], {"suffix": "nry", "entries": 2,
+                                           "ranges": {"2025": ["0002", "0003"]}})
+        self.assertEqual(suffixes[None]["entries"], 1)  # no suffix is null, not "(none)"
         self.assertEqual(data["tags"], {"ai": 2, "x": 1, "y": 1})
         _, out, _ = self.run_cli("stats", "--json", "--per-dir")
         self.assertEqual([len(d["dirs"]) for d in json.loads(out)], [1, 1, 1, 1])

@@ -148,10 +148,11 @@ def _render_stats(st: stats.Stats, title: str) -> list[str]:
     distinct = str(len(st.ids))
     shared = st.shared_ids
     if len(shared) == 1:
-        (i, sufs), = shared.items()
-        distinct += f"   ({i} is used by {len(sufs)} suffixes: {', '.join(sufs)})"
+        ((d, i), sufs), = shared.items()
+        where = f" in {_tilde(d, os.path.expanduser('~'))}" if len(st.dirs) > 1 else ""
+        distinct += f"   ({i} is used by {len(sufs)} suffixes{where}: {', '.join(sufs)})"
     elif shared:
-        distinct += f"   ({len(shared)} ids are used by several suffixes)"
+        distinct += f"   ({len(shared)} ids are used by several suffixes in the same dir)"
     by_year = "   ".join(f"20{yy}: {n}" for yy, n in sorted(st.by_year.items())) or "-"
     lines += ["ENTRIES",
               f"  total entries   {st.entries}",

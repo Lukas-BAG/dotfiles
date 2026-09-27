@@ -12,6 +12,11 @@ from . import entries as ent
 NO_SUFFIX = "(none)"  # can't clash with a real suffix, those are [A-Za-z0-9]+
 
 
+def _json_suffix(name: str) -> str | None:
+    """NO_SUFFIX becomes null in JSON, so it can't be mistaken for a real suffix."""
+    return None if name == NO_SUFFIX else name
+
+
 @dataclass
 class SuffixStats:
     entries: int = 0
@@ -27,13 +32,14 @@ class Stats:
     tagged_sidecars: int = 0
     by_year: Counter = field(default_factory=Counter)  # yy -> entries
     suffixes: dict[str, SuffixStats] = field(default_factory=dict)
-    ids: dict[int, set[str]] = field(default_factory=dict)  # id -> suffixes using it
+    # (dir, id) -> suffixes using it; ids are per dir, the same id in two dirs is unrelated
+    ids: dict[tuple[str, int], set[str]] = field(default_factory=dict)
     tags: Counter = field(default_factory=Counter)  # tag -> sidecars carrying it
 
     @property
-    def shared_ids(self) -> dict[int, list[str]]:
-        """Ids used by more than one suffix, e.g. {260001: ["gel", "nry"]}."""
-        return {i: sorted(s) for i, s in sorted(self.ids.items()) if len(s) > 1}
+    def shared_ids(self) -> dict[tuple[str, int], list[str]]:
+        """Ids used by more than one suffix within one dir, e.g. {(dir, 260001): ["gel", "nry"]}."""
+        return {k: sorted(s) for k, s in sorted(self.ids.items()) if len(s) > 1}
 
     def sorted_suffixes(self) -> list[tuple[str, SuffixStats]]:
         """Most entries first, then by name."""
@@ -49,12 +55,13 @@ class Stats:
             "entries": self.entries,
             "sidecars": self.sidecars,
             "distinct_ids": len(self.ids),
-            "shared_ids": {str(i): s for i, s in self.shared_ids.items()},
+            "shared_ids": [{"dir": d, "id": i, "suffixes": [_json_suffix(s) for s in sufs]}
+                           for (d, i), sufs in self.shared_ids.items()],
             "by_year": {"20" + yy: n for yy, n in sorted(self.by_year.items())},
-            "suffixes": {
-                name: {"entries": s.entries,
-                       "ranges": {"20" + yy: list(r) for yy, r in sorted(s.ranges.items())}}
-                for name, s in self.sorted_suffixes()},
+            "suffixes": [
+                {"suffix": _json_suffix(name), "entries": s.entries,
+                 "ranges": {"20" + yy: list(r) for yy, r in sorted(s.ranges.items())}}
+                for name, s in self.sorted_suffixes()],
             "tagged_sidecars": self.tagged_sidecars,
             "tags": dict(self.sorted_tags()),
         }
@@ -72,7 +79,7 @@ def collect(dirs: list[str]) -> Stats:
             s.entries += 1
             lo, hi = s.ranges.get(e.yy, (e.seq, e.seq))
             s.ranges[e.yy] = (min(lo, e.seq), max(hi, e.seq))
-            stats.ids.setdefault(e.id, set()).add(suffix)
+            stats.ids.setdefault((d, e.id), set()).add(suffix)
 
         for sidecar in ent.list_sidecars(d):
             stats.sidecars += 1

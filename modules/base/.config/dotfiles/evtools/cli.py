@@ -28,8 +28,10 @@ def _discover(args: argparse.Namespace, prog: str,
               links: bool = False) -> tuple[str, list[str]] | None:
     """Resolve --root and find its Everything dirs; print an error and return None if none.
 
-    Symlinked Everything dirs are only included with `links` (list, pick):
-    elsewhere they would count or search their target twice.
+    With `links` (list, pick) every symlinked Everything dir is included.
+    Otherwise (goto --all, entries --all, stats, check) a link is only included
+    if its target isn't found directly or via an earlier link, so each dir is
+    searched and counted once.
     """
     home = os.path.expanduser("~")
     if not os.path.isdir(args.root):
@@ -37,7 +39,9 @@ def _discover(args: argparse.Namespace, prog: str,
         return None
     root = os.path.realpath(args.root)
     dirs, age = discovery.find_everything_dirs_cached(root, home, fresh=args.fresh,
-                                                     network=args.network, links=links)
+                                                     network=args.network, links=True)
+    if not links:
+        dirs = discovery.drop_duplicate_links(dirs)
     if age is not None:
         print(f"{prog}: using cached Everything-dir list ({_age(age)} old; "
               "--fresh to re-search)", file=sys.stderr)
@@ -539,6 +543,9 @@ def cmd_help(args: argparse.Namespace) -> int:
 DEFAULT_ROOT = "/"
 NETWORK_HELP = ("also search network filesystems (nfs, cifs, sshfs, ...); local mounts are "
                 "always searched")
+LINKS_NOTE = ("A symlink named like an Everything dir is included (as the link path) only "
+              "if its target isn't found directly, so each dir counts once; links are "
+              "never followed while searching.")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -575,7 +582,7 @@ def build_parser() -> argparse.ArgumentParser:
                        "description. Read-only.")
     p.add_argument("-a", "--all", action="store_true",
                    help="list the entries of every Everything dir under --root, with an "
-                        "extra column naming the dir; works from anywhere")
+                        "extra column naming the dir; works from anywhere. " + LINKS_NOTE)
     p.add_argument("--size", action="store_true",
                    help="add each entry's recursive size (symlinks not followed) and sort by "
                         "it, largest first")
@@ -614,7 +621,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("year", nargs="?", help="year of a numeric id, e.g. 25 or 2025")
     scope = p.add_mutually_exclusive_group()
     scope.add_argument("-a", "--all", action="store_true",
-                       help="search every Everything dir under --root, not just the bashmark")
+                       help="search every Everything dir under --root, not just the "
+                            "bashmark. " + LINKS_NOTE)
     scope.add_argument("--dir", help="search this dir instead of the bashmark (used by gel)")
     p.add_argument("--root", default=DEFAULT_ROOT,
                    help="where --all searches for Everything dirs (default: /)")
@@ -631,7 +639,7 @@ def build_parser() -> argparse.ArgumentParser:
                        "entry counts (total, distinct ids, per year), entries and id range per "
                        "suffix (split by year, since seq restarts every year) and tag usage. "
                        "One combined total by default. Read-only; problems such as missing "
-                       "sidecars are left to the checker.")
+                       "sidecars are left to the checker. " + LINKS_NOTE)
     p.add_argument("--root", default=DEFAULT_ROOT,
                    help="where to search (default: /)")
     p.add_argument("--network", action="store_true", help=NETWORK_HELP)
@@ -654,7 +662,7 @@ def build_parser() -> argparse.ArgumentParser:
                        "must be such a sidecar with exactly one dir. Problems are major or "
                        "medium; minor slips (no tags, a tag without \"@\", tags differing "
                        "only in case, ...) only show with --all-levels. Exits 1 if anything "
-                       "is shown. Read-only.")
+                       "is shown. Read-only. " + LINKS_NOTE)
     p.add_argument("--root", default=DEFAULT_ROOT,
                    help="where to search (default: /)")
     p.add_argument("--network", action="store_true", help=NETWORK_HELP)

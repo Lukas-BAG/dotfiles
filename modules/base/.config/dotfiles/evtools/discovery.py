@@ -140,6 +140,26 @@ def is_link(path: str) -> bool:
     return os.path.islink(path)
 
 
+def drop_duplicate_links(dirs: list[str]) -> list[str]:
+    """`dirs` without symlinked Everything dirs whose target is already in it.
+
+    A link is kept only if it is the sole way to reach its target in `dirs`
+    (e.g. the target is outside the searched root or on an unsearched
+    filesystem); of several links to one such target, the first is kept. For
+    commands that search or count every dir once. Order is preserved.
+    """
+    seen = {os.path.realpath(d) for d in dirs if not is_link(d)}
+    kept = []
+    for d in dirs:
+        if is_link(d):
+            target = os.path.realpath(d)
+            if target in seen:
+                continue
+            seen.add(target)
+        kept.append(d)
+    return kept
+
+
 # Global switch for the cache below. Off for now: searching ~ is fast enough on
 # current machines, and a stale cache hides new Everything dirs. With it off,
 # nothing is read or written and --fresh is accepted but does nothing.

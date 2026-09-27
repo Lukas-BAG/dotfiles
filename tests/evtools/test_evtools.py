@@ -1317,5 +1317,66 @@ class HelpCommandTest(unittest.TestCase):
         self.assertEqual(sorted(self.overview_names(1)), sorted(wrappers))
 
 
+class LinkOnlyDirsTest(TreeTest):
+    """Everything dirs reachable under --root only via a symlink (ticket 019)."""
+    run_cli = ListCommandTest.run_cli
+
+    def setUp(self):
+        super().setUp()
+        # searched root is ~/Main; the target lives outside it
+        self.root = self.p("Main")
+        self.ext = self.p("outside", "Ext-Everything")
+        os.makedirs(os.path.join(self.ext, "260050-ext"))
+        open(os.path.join(self.ext, "260050-ext_external_note_@ai.md"), "w").close()
+        self.link = self.p("Main", "ext-everything")
+        os.symlink(self.ext, self.link)
+        os.symlink(self.ext, self.p("Main", "zz-second-everything"))  # same target again
+        os.symlink(self.p("Main", "Everything"), self.p("Main", "dup-everything"))  # found directly
+
+    def test_drop_duplicate_links(self):
+        dirs = discovery.find_everything_dirs(self.root, self.home, links=True)
+        self.assertEqual(discovery.drop_duplicate_links(dirs), [
+            self.p("Main", "Everything"),
+            self.p("Main", "Everything", "250001", "sub-everything"),
+            self.link,
+        ])
+
+    def test_goto_all_finds_entry_via_link(self):
+        rc, out, err = self.run_cli("goto", "--all", "--root", self.root, "50", "26")
+        self.assertEqual((rc, out), (0, os.path.join(self.link, "260050-ext") + "\n"))
+        self.assertEqual(err, "everything goto: 260050-ext_external_note_@ai  ~/Main/ext-everything\n")
+
+    def test_goto_all_no_duplicates_via_link_to_found_dir(self):
+        # 250002-nry is in ~/Main/Everything, also reachable as dup-everything
+        rc, out, _ = self.run_cli("goto", "--all", "--root", self.root, "2", "25")
+        self.assertEqual((rc, out), (0, self.p("Main", "Everything", "250002-nry") + "\n"))
+
+    def test_entries_all(self):
+        rc, out, _ = self.run_cli("entries", "--all", "--root", self.root)
+        self.assertEqual(rc, 0)
+        self.assertIn("(8 entries in 3 dirs)", out)
+        self.assertEqual(out.count("260050-ext"), 1)
+        self.assertIn("~/Main/ext-everything", out)
+
+    def test_stats_and_check_count_link_once(self):
+        _, out, _ = self.run_cli("stats", "--json", "--root", self.root)
+        data = json.loads(out)
+        self.assertEqual(data["entries"], 8)
+        _, out, _ = self.run_cli("check", "--json", "--root", self.root)
+        self.assertEqual([d["dir"] for d in json.loads(out)["dirs"]], [
+            self.p("Main", "Everything"),
+            self.p("Main", "Everything", "250001", "sub-everything"),
+            self.link,
+        ])
+
+    def test_help_documents_links(self):
+        for cmd in ["goto", "entries", "stats", "check"]:
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out), self.assertRaises(SystemExit):
+                cli.main([cmd, "--help"])
+            self.assertIn("only if its target isn't found directly",
+                          " ".join(out.getvalue().split()), cmd)
+
+
 if __name__ == "__main__":
     unittest.main()

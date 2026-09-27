@@ -786,6 +786,23 @@ gel() {
     fi
 }
 
+# c(d) e(verything): jump to one of the Everything dirs that lse lists. The
+# picking is done by `everything pick` (see ~/.local/bin/everything); this only
+# does the cd, which a subprocess can't do for the shell.
+#
+# Usage: cde [--root <path>] [<text>]
+#   cde          -> fzf picker over every Everything dir
+#   cde archive  -> cd straight in if one path contains "archive", else picker
+cde() {
+    local dir
+    dir=$(everything pick "$@") || return
+    if [ -d "$dir" ]; then
+        cd -- "$dir" && echo "cde: ${dir/#"$HOME"/\~}"
+    else
+        printf '%s\n' "$dir"  # e.g. --help output
+    fi
+}
+
 # lse (list every Everything dir) is now `everything list`, aliased in
 # aliases.d/base.sh; see ~/.local/bin/everything.
 

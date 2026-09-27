@@ -189,5 +189,70 @@ Everything dirs under ~ (4 found, 1 nested)
         self.assertIn(self.p("Main", "Everything"), res.stdout.splitlines())
 
 
+class PickCommandTest(TreeTest):
+    run_cli = ListCommandTest.run_cli
+
+    def test_single_text_match_prints_path(self):
+        with mock.patch("shutil.which", side_effect=AssertionError("fzf not needed")):
+            rc, out, _ = self.run_cli("pick", "OLD_every")
+        self.assertEqual((rc, out), (0, self.p("Archive", "old_everything") + "\n"))
+
+    def test_text_matches_whole_path(self):
+        rc, out, _ = self.run_cli("pick", "archive")
+        self.assertEqual((rc, out), (0, self.p("Archive", "old_everything") + "\n"))
+
+    def test_no_match(self):
+        rc, out, err = self.run_cli("pick", "zzz")
+        self.assertEqual((rc, out), (1, ""))
+        self.assertIn("no Everything dir matching 'zzz'", err)
+
+    def test_several_matches_use_fzf_with_list_rows(self):
+        chosen = self.p("Main", "Everything", "250001", "sub-everything")
+        calls = []
+
+        def fake_fzf(cmd, input, **kw):
+            calls.append((cmd, input))
+            line = next(l for l in input.splitlines() if l.endswith("\t" + chosen))
+            return subprocess.CompletedProcess(cmd, 0, stdout=line + "\n")
+
+        with mock.patch("shutil.which", return_value="/usr/bin/fzf"), \
+                mock.patch("subprocess.run", side_effect=fake_fzf):
+            rc, out, _ = self.run_cli("pick", "main")
+        self.assertEqual((rc, out), (0, chosen + "\n"))
+        cmd, fed = calls[0]
+        self.assertEqual(fed.splitlines(), [
+            "* ~/Main/Everything                                  6  260002-lnk    "
+            "(none),nry,abc,gel,lnk\t" + self.p("Main", "Everything"),
+            "    └ ~/Main/Everything/250001/sub-everything        1  250001-sub    sub\t"
+            + chosen,
+        ])
+        self.assertIn("--prompt=multiple matches for 'main' > ", cmd)
+
+    def test_no_text_always_picks_even_single_dir(self):
+        with mock.patch("shutil.which", return_value="/usr/bin/fzf"), \
+                mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(
+                    [], 130, stdout="")):
+            rc, out, err = self.run_cli("pick", "--root", self.p("Archive"))
+        self.assertEqual((rc, out), (1, ""))
+        self.assertIn("no selection made", err)
+
+    def test_without_fzf_lists_matches_and_refuses(self):
+        with mock.patch("shutil.which", return_value=None):
+            rc, out, err = self.run_cli("pick", "main")
+        self.assertEqual((rc, out), (1, ""))
+        self.assertIn("fzf not found", err)
+        self.assertIn("~/Main/Everything/250001/sub-everything", err)
+
+    def test_cde_changes_dir(self):
+        functions = os.path.join(REPO, "modules", "base", ".config", "dotfiles",
+                                 "functions.d", "base.sh")
+        script = f'everything() {{ "{SHIM}" "$@"; }}; source "{functions}"; cde archive && pwd'
+        res = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                             env={**os.environ, "HOME": self.home})
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertEqual(res.stdout.splitlines(), [
+            "cde: ~/Archive/old_everything", self.p("Archive", "old_everything")])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -17,7 +17,7 @@ from unittest import mock
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(REPO, "modules", "base", ".config", "dotfiles"))
 
-from evtools import cli, discovery, entries, stats  # noqa: E402
+from evtools import cli, discovery, entries, goto, stats  # noqa: E402
 
 SHIM = os.path.join(REPO, "modules", "base", ".local", "bin", "everything")
 
@@ -295,6 +295,165 @@ class PickCommandTest(TreeTest):
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertEqual(res.stdout.splitlines(), [
             "cde: ~/Archive/old_everything", self.p("Archive", "old_everything")])
+
+
+class GotoCommandTest(TreeTest):
+    run_cli = ListCommandTest.run_cli
+
+    def setUp(self):
+        super().setUp()
+        self.main = self.p("Main", "Everything")
+        self.sub = self.p("Main", "Everything", "250001", "sub-everything")
+        for d, name in [(self.main, "250001_Fire_drill.md"), (self.main, "250003-nry_fire_@x.md"),
+                        (self.main, "250003-nry_second_fire.md"),  # same entry twice
+                        (self.main, "260099_fire_orphan.md"),       # no such entry dir
+                        (self.main, "250003-nry_fire.txt"),          # not .md
+                        (self.sub, "250001-sub_campfire.md")]:
+            open(os.path.join(d, name), "w").close()
+
+    def fake_fzf(self, pick_suffix, calls):
+        def run(cmd, input, **kw):
+            calls.append((cmd, input))
+            line = next(l for l in input.splitlines() if l.endswith(pick_suffix))
+            return subprocess.CompletedProcess(cmd, 0, stdout=line + "\n")
+        return run
+
+    def test_year_prefix(self):
+        self.assertEqual(goto.id_prefix("1", "25"), "250001")
+        self.assertEqual(goto.id_prefix("0012", "2025"), "250012")
+        self.assertEqual(goto.year_prefix(None), time.strftime("%y"))
+        with self.assertRaises(ValueError):
+            goto.year_prefix("225")
+
+    def test_id_single_match_in_bookmark(self):
+        rc, out, err = self.run_cli("goto", "--label", "ge", "2", "25")
+        self.assertEqual((rc, out), (0, self.p("Main", "Everything", "250002-nry") + "\n"))
+        self.assertEqual(err, "ge: 250002-nry_first_note_@ai_@x\n")
+
+    def test_id_matches_symlinked_entry_and_bare_name(self):
+        rc, out, _ = self.run_cli("goto", "2", "2026")
+        self.assertEqual(out, self.p("Main", "Everything", "260002-lnk") + "\n")
+        rc, out, err = self.run_cli("goto", "1", "25")
+        self.assertEqual(out, self.p("Main", "Everything", "250001") + "\n")
+        self.assertEqual(err, "everything goto: 250001_Fire_drill\n")
+
+    def test_id_several_matches_use_fzf(self):
+        calls = []
+        with mock.patch("shutil.which", return_value="/usr/bin/fzf"), \
+                mock.patch("subprocess.run", side_effect=self.fake_fzf("260001-gel", calls)):
+            rc, out, _ = self.run_cli("goto", "--label", "ge", "1", "26")
+        self.assertEqual((rc, out), (0, self.p("Main", "Everything", "260001-gel") + "\n"))
+        cmd, fed = calls[0]
+        self.assertEqual(fed.splitlines(), [
+            "260001-abc\t" + self.p("Main", "Everything", "260001-abc"),
+            "260001-gel\t" + self.p("Main", "Everything", "260001-gel")])
+        self.assertIn("--prompt=ge: multiple matches for '260001' > ", cmd)
+
+    def test_text_search(self):
+        calls = []
+        with mock.patch("shutil.which", return_value="/usr/bin/fzf"), \
+                mock.patch("subprocess.run", side_effect=self.fake_fzf("250001", calls)):
+            rc, out, _ = self.run_cli("goto", "FIRE")
+        self.assertEqual(out, self.p("Main", "Everything", "250001") + "\n")
+        # 250003-nry once despite two sidecars; orphan sidecar, .txt and nested dir left out
+        self.assertEqual(calls[0][1].splitlines(), [
+            "250001_Fire_drill\t" + self.p("Main", "Everything", "250001"),
+            "250003-nry_fire_@x\t" + self.p("Main", "Everything", "250003-nry")])
+
+    def test_all_searches_every_everything_dir(self):
+        calls = []
+        with mock.patch("shutil.which", return_value="/usr/bin/fzf"), \
+                mock.patch("subprocess.run", side_effect=self.fake_fzf("250001-sub", calls)):
+            rc, out, _ = self.run_cli("goto", "--label", "ge", "-a", "1", "25")
+        self.assertEqual((rc, out), (0, self.p(self.sub, "250001-sub") + "\n"))
+        cmd, fed = calls[0]
+        self.assertEqual(fed.splitlines(), [
+            "250001_Fire_drill    ~/Main/Everything\t" + self.p(self.main, "250001"),
+            "250001-sub_campfire  ~/Main/Everything/250001/sub-everything\t"
+            + self.p(self.sub, "250001-sub")])
+        self.assertIn("--prompt=ge: multiple matches for '250001' in any Everything dir > ", cmd)
+
+    def test_all_single_match_names_its_dir(self):
+        rc, out, err = self.run_cli("goto", "--label", "ge", "--all", "campfire")
+        self.assertEqual((rc, out), (0, self.p(self.sub, "250001-sub") + "\n"))
+        self.assertEqual(err, "ge: 250001-sub_campfire  ~/Main/Everything/250001/sub-everything\n")
+        # without --all only the bookmark dir is searched
+        rc, out, err = self.run_cli("goto", "--label", "ge", "campfire")
+        self.assertEqual((rc, out, err), (1, "", "ge: no entry matching 'campfire' found\n"))
+
+    def test_dir_option(self):
+        rc, out, _ = self.run_cli("goto", "--dir", self.sub, "1", "25")
+        self.assertEqual((rc, out), (0, self.p(self.sub, "250001-sub") + "\n"))
+        rc, _, err = self.run_cli("goto", "--dir", self.p("nope"), "x")
+        self.assertEqual((rc, err), (1, f"everything goto: not a dir: {self.p('nope')}\n"))
+
+    def test_no_query(self):
+        rc, out, _ = self.run_cli("goto")
+        self.assertEqual((rc, out), (0, self.main + "\n"))
+        rc, out, err = self.run_cli("goto", "--all")
+        self.assertEqual((rc, out), (1, ""))
+        self.assertIn("--all needs an id or text", err)
+
+    def test_errors(self):
+        rc, _, err = self.run_cli("goto", "--label", "ge", "1", "225")
+        self.assertEqual((rc, err), (1, "ge: invalid year '225' - use e.g. 25 or 2025\n"))
+        rc, _, err = self.run_cli("goto", "fire", "drill")
+        self.assertEqual(rc, 1)
+        self.assertIn("a year only goes with a numeric id", err)
+        rc, _, err = self.run_cli("goto", "--label", "ge", "-a", "zzz")
+        self.assertEqual((rc, err), (1, "ge: no entry matching 'zzz' found in any Everything dir\n"))
+        os.remove(self.p(".sdirs"))
+        rc, _, err = self.run_cli("goto", "--label", "ge", "1")
+        self.assertEqual((rc, err), (1, "ge: bashmark 'e' is not set to a valid dir (set it with: s e)\n"))
+
+    def test_without_fzf_lists_matches_and_refuses(self):
+        with mock.patch("shutil.which", return_value=None):
+            rc, out, err = self.run_cli("goto", "--label", "ge", "fire")
+        self.assertEqual((rc, out), (1, ""))
+        self.assertIn("ge: multiple entries match 'fire', refusing:", err)
+        self.assertIn(self.p(self.main, "250003-nry"), err)
+
+    def test_fzf_cancel_refuses(self):
+        with mock.patch("shutil.which", return_value="/usr/bin/fzf"), \
+                mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(
+                    [], 130, stdout="")):
+            rc, out, err = self.run_cli("goto", "fire")
+        self.assertEqual((rc, out), (1, ""))
+        self.assertIn("no selection made", err)
+
+    def test_read_only(self):
+        def snapshot():
+            return sorted((os.path.join(d, n), os.lstat(os.path.join(d, n)).st_mtime_ns)
+                          for d, dn, fn in os.walk(self.home) for n in dn + fn)
+        before = snapshot()
+        for args in [("2", "25"), ("-a", "campfire"), ("--dir", self.sub, "1", "25"), ()]:
+            self.run_cli("goto", *args)
+        self.assertEqual(snapshot(), before)
+
+    def run_bash(self, cmd, cwd=None):
+        functions = os.path.join(REPO, "modules", "base", ".config", "dotfiles",
+                                 "functions.d", "base.sh")
+        script = f'everything() {{ "{SHIM}" "$@"; }}; source "{functions}"; {cmd}'
+        return subprocess.run(["bash", "-c", script], capture_output=True, text=True, cwd=cwd,
+                              env={**os.environ, "HOME": self.home})
+
+    def test_ge_and_gel_change_dir(self):
+        res = self.run_bash("ge 2 25 && pwd")
+        self.assertEqual((res.returncode, res.stdout, res.stderr),
+                         (0, self.p(self.main, "250002-nry") + "\n",
+                          "ge: 250002-nry_first_note_@ai_@x\n"))
+        res = self.run_bash("ge --all campfire && pwd")
+        self.assertEqual(res.stdout, self.p(self.sub, "250001-sub") + "\n")
+        res = self.run_bash("ge && pwd")
+        self.assertEqual(res.stdout, self.main + "\n")
+        res = self.run_bash("gel campfire && pwd", cwd=self.sub)
+        self.assertEqual((res.returncode, res.stdout), (0, self.p(self.sub, "250001-sub") + "\n"))
+
+    def test_ge_failure_stays_put(self):
+        res = self.run_bash("ge zzz; echo $?; pwd", cwd=self.p("Archive"))
+        self.assertEqual(res.stdout.splitlines(), ["1", self.p("Archive")])
+        res = self.run_bash("gel; echo $?")
+        self.assertEqual((res.stdout, res.stderr), ("1\n", "usage: gel <id-or-text> [year]\n"))
 
 
 class StatsTest(TreeTest):

@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import sys
 
-from . import discovery, entries, stats
+from . import discovery, entries, goto, stats
 
 
 def _tilde(path: str, home: str) -> str:
@@ -141,6 +141,86 @@ def cmd_pick(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_goto(args: argparse.Namespace) -> int:
+    """Print one entry dir, found by id or sidecar text, for ge/gel to cd into."""
+    prog = args.label
+    home = os.path.expanduser("~")
+    if args.all:
+        found = _discover(args, prog)
+        if found is None:
+            return 1
+        bases = found[1]
+    elif args.dir:
+        if not os.path.isdir(args.dir):
+            print(f"{prog}: not a dir: {args.dir}", file=sys.stderr)
+            return 1
+        bases = [args.dir]
+    else:
+        bookmark = discovery.bookmark_dir()
+        if bookmark is None:
+            print(f"{prog}: bashmark 'e' is not set to a valid dir (set it with: s e)",
+                  file=sys.stderr)
+            return 1
+        bases = [bookmark]
+
+    if args.query is None:
+        if args.all:
+            print(f"{prog}: --all needs an id or text (to pick an Everything dir, use cde)",
+                  file=sys.stderr)
+            return 1
+        print(bases[0])  # plain `ge`: go to the Everything dir itself
+        return 0
+
+    if args.query.isdigit():
+        try:
+            reason = goto.id_prefix(args.query, args.year)
+        except ValueError:
+            print(f"{prog}: invalid year '{args.year}' - use e.g. 25 or 2025", file=sys.stderr)
+            return 1
+        matches = [(b, e) for b in bases for e in goto.find_by_id(b, reason)]
+    else:
+        if args.year is not None:
+            print(f"{prog}: a year only goes with a numeric id (quote text with spaces)",
+                  file=sys.stderr)
+            return 1
+        reason = args.query
+        matches = [(b, e) for b in bases for e in goto.find_by_text(b, reason)]
+
+    where = " in any Everything dir" if args.all else ""
+    if not matches:
+        print(f"{prog}: no entry matching '{reason}' found{where}", file=sys.stderr)
+        return 1
+
+    def label(base: str, entry: str, width: int = 0) -> str:
+        name = goto.sidecar_name(entry)
+        return f"{name:<{width}}  {_tilde(base, home)}" if args.all else name
+
+    if len(matches) == 1:
+        (base, entry), = matches
+        # stderr, so $(everything goto) still only captures the path
+        print(f"{prog}: {label(base, entry)}", file=sys.stderr)
+        print(entry)
+        return 0
+
+    if shutil.which("fzf") is None:
+        print(f"{prog}: multiple entries match '{reason}', refusing:", file=sys.stderr)
+        print("\n".join(f"  {e}" for _, e in matches), file=sys.stderr)
+        return 1
+    width = max(len(goto.sidecar_name(e)) for _, e in matches)
+    rows = [f"{label(b, e, width)}\t{e}" for b, e in matches]
+    # fzf draws its UI on /dev/tty, so this also works inside $(...)
+    res = subprocess.run(
+        ["fzf", "--delimiter=\t", "--with-nth=1",
+         f"--prompt={prog}: multiple matches for '{reason}'{where} > "],
+        input="\n".join(rows) + "\n", stdout=subprocess.PIPE, text=True)
+    pick = res.stdout.rstrip("\n").split("\t")[-1] if res.returncode == 0 else ""
+    if not pick:
+        print(f"{prog}: no selection made, refusing", file=sys.stderr)
+        return 1
+    print(pick)
+    return 0
+
+
 def _plural(n: int, word: str, plural: str | None = None) -> str:
     return f"{n} {word if n == 1 else plural or word + 's'}"
 
@@ -250,6 +330,27 @@ def build_parser() -> argparse.ArgumentParser:
                    help="ignore the cached Everything-dir list (up to 6 h old) and search again "
                         "(no-op while the cache is disabled)")
     p.set_defaults(func=cmd_pick)
+
+    p = sub.add_parser("goto", help="print one entry dir, by id or sidecar text (used by ge/gel)",
+                       description="Print the path of one \"<yy><seq>[-suffix]\" entry dir. "
+                       "A numeric QUERY is an id (\"1\" -> \"<yy>0001\", YEAR as 25 or 2025, "
+                       "default this year); other text is matched against sidecar file names "
+                       "(any case). Searches the \"e\" bashmark dir by default. A single match "
+                       "is printed directly, several are offered in fzf; without QUERY the "
+                       "searched dir itself is printed. Read-only; ge and gel wrap this to cd there.")
+    p.add_argument("query", nargs="?", help="numeric id or case-insensitive text")
+    p.add_argument("year", nargs="?", help="year of a numeric id, e.g. 25 or 2025")
+    scope = p.add_mutually_exclusive_group()
+    scope.add_argument("-a", "--all", action="store_true",
+                       help="search every Everything dir under --root, not just the bashmark")
+    scope.add_argument("--dir", help="search this dir instead of the bashmark (used by gel)")
+    p.add_argument("--root", default=os.path.expanduser("~"),
+                   help="where --all searches for Everything dirs (default: $HOME)")
+    p.add_argument("--fresh", action="store_true",
+                   help="with --all, ignore the cached Everything-dir list (no-op while the "
+                        "cache is disabled)")
+    p.add_argument("--label", default="everything goto", help=argparse.SUPPRESS)
+    p.set_defaults(func=cmd_goto)
 
     p = sub.add_parser("stats", help="entry, suffix and tag statistics across Everything dirs",
                        description="Statistics over the \"<yy><seq>[-suffix]\" entries and "

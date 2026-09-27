@@ -24,15 +24,20 @@ def _age(seconds: float) -> str:
     return f"{minutes // 60} h {minutes % 60} min"
 
 
-def _discover(args: argparse.Namespace, prog: str) -> tuple[str, list[str]] | None:
-    """Resolve --root and find its Everything dirs; print an error and return None if none."""
+def _discover(args: argparse.Namespace, prog: str,
+              links: bool = False) -> tuple[str, list[str]] | None:
+    """Resolve --root and find its Everything dirs; print an error and return None if none.
+
+    Symlinked Everything dirs are only included with `links` (list, pick):
+    elsewhere they would count or search their target twice.
+    """
     home = os.path.expanduser("~")
     if not os.path.isdir(args.root):
         print(f"{prog}: not a dir: {args.root}", file=sys.stderr)
         return None
     root = os.path.realpath(args.root)
     dirs, age = discovery.find_everything_dirs_cached(root, home, fresh=args.fresh,
-                                                     network=args.network)
+                                                     network=args.network, links=links)
     if age is not None:
         print(f"{prog}: using cached Everything-dir list ({_age(age)} old; "
               "--fresh to re-search)", file=sys.stderr)
@@ -59,6 +64,9 @@ def _table(dirs: list[str], home: str, bookmark: str | None) -> tuple[str, list[
         suffixes = list(dict.fromkeys(e.suffix or "(none)" for e in found))
 
         display = _tilde(d, home) if d != home else d
+        if discovery.is_link(d):
+            target = os.path.realpath(d)
+            display += " → " + (_tilde(target, home) if target != home else target)
         if depth:
             display = " " * (depth * 2) + "└ " + display
         display = ("* " if d == bookmark else "  ") + display
@@ -73,18 +81,22 @@ def _table(dirs: list[str], home: str, bookmark: str | None) -> tuple[str, list[
 
 def cmd_list(args: argparse.Namespace) -> int:
     """List every Everything dir with entry count, newest entry and suffixes."""
-    found = _discover(args, "everything list")
+    found = _discover(args, "everything list", links=True)
     if found is None:
         return 1
     root, dirs = found
     if args.paths:
-        print("\n".join(dirs))
+        # bare paths are for scripts, which would otherwise see a linked dir twice
+        print("\n".join(d for d in dirs if not discovery.is_link(d)))
         return 0
 
     home = os.path.expanduser("~")
     bookmark = discovery.bookmark_dir()
     header, lines, nested = _table(dirs, home, bookmark)
-    print(f"Everything dirs under {_tilde(root, home)} ({len(dirs)} found, {nested} nested)")
+    links = sum(map(discovery.is_link, dirs))
+    counts = f"{len(dirs)} found, {nested} nested" + (f", {_plural(links, 'symlink')}"
+                                                        if links else "")
+    print(f"Everything dirs under {_tilde(root, home)} ({counts})")
     print()
     print(header)
     print("\n".join(lines))
@@ -103,7 +115,7 @@ def _matching(dirs: list[str], text: str | None) -> list[str]:
 def cmd_pick(args: argparse.Namespace) -> int:
     """Print one Everything dir, matched by text and/or picked with fzf."""
     prog = "everything pick"
-    found = _discover(args, prog)
+    found = _discover(args, prog, links=True)
     if found is None:
         return 1
     _, dirs = found
@@ -491,7 +503,8 @@ def build_parser() -> argparse.ArgumentParser:
                        "contains \"everything\", any case) with its \"<yy><seq>[-suffix]\" "
                        "entry count, newest entry and suffixes. Dirs nested in another "
                        "listed dir are indented; \"*\" marks the \"e\" bashmark used by ge. "
-                       "Read-only.")
+                       "Symlinks named like an Everything dir show as \"link → target\"; "
+                       "they are never followed, and broken ones are left out. Read-only.")
     p.add_argument("--root", default=DEFAULT_ROOT,
                    help="where to search (default: /)")
     p.add_argument("--network", action="store_true", help=NETWORK_HELP)
@@ -499,7 +512,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="ignore the cached Everything-dir list (up to 6 h old) and search again "
                         "(no-op while the cache is disabled)")
     p.add_argument("--paths", action="store_true",
-                   help="print bare absolute paths only, one per line (for scripting)")
+                   help="print bare absolute paths only, one per line (for scripting); "
+                        "symlinked Everything dirs are left out")
     p.set_defaults(func=cmd_list)
 
     p = sub.add_parser("entries", help="list the entries of the Everything dir you're in "
@@ -528,7 +542,9 @@ def build_parser() -> argparse.ArgumentParser:
                        description="Print the absolute path of one Everything dir. Without "
                        "TEXT, consider all of them; with TEXT, only dirs whose path "
                        "contains it (any case). A single candidate is printed directly, "
-                       "several are offered in fzf. Read-only; cde wraps this to cd there.")
+                       "several are offered in fzf. Symlinked Everything dirs are offered "
+                       "too and printed as the link path. Read-only; cde wraps this to cd "
+                       "there.")
     p.add_argument("text", nargs="?", help="case-insensitive substring of the path")
     p.add_argument("--root", default=DEFAULT_ROOT,
                    help="where to search (default: /)")

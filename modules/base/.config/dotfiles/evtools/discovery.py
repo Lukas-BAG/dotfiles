@@ -91,10 +91,13 @@ def enclosing_everything_dir(path: str) -> str | None:
 
 
 def find_everything_dirs(root: str, home: str | None = None, network: bool = False,
-                         mounts_file: str = MOUNTS_FILE) -> list[str]:
+                         mounts_file: str = MOUNTS_FILE, links: bool = False) -> list[str]:
     """All Everything dirs under `root` (including `root` itself), sorted.
 
-    Never follows symlinks. Crosses into other local filesystems, but not into
+    Never follows symlinks. With `links`, symlinks whose own name matches and
+    whose target is a dir are included too (as the link path, see is_link);
+    their target is checked, never walked, so link loops can't hang the search.
+    Broken links are left out. Crosses into other local filesystems, but not into
     pseudo filesystems, or network ones unless `network`. System dirs, tool
     scratch dirs and Python venvs are pruned too (see skip_paths/_pruned);
     `root` itself is always searched, even if it is one of them. Unreadable
@@ -124,9 +127,17 @@ def find_everything_dirs(root: str, home: str | None = None, network: bool = Fal
             try:
                 if child.is_dir(follow_symlinks=False):
                     stack.append(child.path)
+                elif links and child.is_symlink() and is_everything_name(child.name) \
+                        and os.path.isdir(child.path):
+                    found.append(child.path)
             except OSError:
                 continue
     return sorted(found)
+
+
+def is_link(path: str) -> bool:
+    """Whether a path from find_everything_dirs(links=True) is a symlinked Everything dir."""
+    return os.path.islink(path)
 
 
 # Global switch for the cache below. Off for now: searching ~ is fast enough on
@@ -136,7 +147,7 @@ CACHE_ENABLED = False
 # Everything dirs are rarely created, so a search result this old is still good
 CACHE_TTL = 6 * 60 * 60
 # part of the cache key: bump when discovery rules change, so old results aren't reused
-CACHE_VERSION = 2
+CACHE_VERSION = 3
 
 
 def cache_file(home: str | None = None) -> str:
@@ -170,18 +181,20 @@ def _write_cache(path: str, data: dict) -> None:
 
 
 def find_everything_dirs_cached(root: str, home: str | None = None, fresh: bool = False,
-                                network: bool = False) -> tuple[list[str], float | None]:
+                                network: bool = False,
+                                links: bool = False) -> tuple[list[str], float | None]:
     """find_everything_dirs() through a cache in ~/.cache/dotfiles/.
 
     Returns (dirs, age): age is the cache entry's age in seconds, or None if
     a new search ran (and was written back). There is one entry per set of
     search options; entries older than CACHE_TTL are ignored, as is the whole
     cache with `fresh`. With CACHE_ENABLED off this is a plain search. Cached dirs that no longer exist are left out. The
+    cache always holds symlinked dirs too; they are dropped unless `links`. The
     cache file is the only thing written.
     """
     home = home if home is not None else os.path.expanduser("~")
     if not CACHE_ENABLED:
-        return find_everything_dirs(root, home, network), None
+        return find_everything_dirs(root, home, network, links=links), None
     root = os.path.normpath(root)
     path = cache_file(home)
     key = json.dumps({"v": CACHE_VERSION, "root": root, "network": network}, sort_keys=True)
@@ -196,12 +209,12 @@ def find_everything_dirs_cached(root: str, home: str | None = None, fresh: bool 
         except (KeyError, TypeError, ValueError):
             age = None
         if age is not None and 0 <= age < CACHE_TTL:
-            return [d for d in dirs if os.path.isdir(d)], age
+            return [d for d in dirs if os.path.isdir(d) and (links or not is_link(d))], age
 
-    dirs = find_everything_dirs(root, home, network)
+    dirs = find_everything_dirs(root, home, network, links=True)
     data[key] = {"time": now, "dirs": dirs}
     _write_cache(path, data)
-    return dirs, None
+    return [d for d in dirs if links or not is_link(d)], None
 
 
 def bookmark_dir(sdirs: str | None = None) -> str | None:

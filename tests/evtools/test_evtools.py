@@ -50,7 +50,7 @@ def make_tree(home):
                     ("proj", ".venv", "Everything"), ("proj", "site-packages", "Everything")]:
         mkdir(*skipped)
     touch("proj", ".venv", "pyvenv.cfg")
-    os.symlink(main, os.path.join(home, "LinkToEverything"))  # symlinks aren't followed
+    os.symlink(main, os.path.join(home, "LinkToEverything"))  # reported, never followed
     touch("everything.txt")  # files never match
 
     with open(os.path.join(home, ".sdirs"), "w") as f:
@@ -83,6 +83,27 @@ class DiscoveryTest(TreeTest):
             self.p("Main", "Everything"),
             self.p("Main", "Everything", "250001", "sub-everything"),
         ])
+
+    def test_links_reported_never_followed(self):
+        a = self.p("a")
+        os.makedirs(os.path.join(a, "real-everything"))
+        os.symlink(a, os.path.join(a, "loop-everything"))  # loop back to its own parent
+        os.symlink(self.p("gone"), os.path.join(a, "broken-everything"))
+        os.symlink(os.path.join(a, "self-everything"), os.path.join(a, "self-everything"))
+        os.symlink(self.p("everything.txt"), os.path.join(a, "file-everything"))  # not a dir
+        os.symlink(self.p("Archive"), os.path.join(a, "plain-link"))  # name doesn't match
+        found = discovery.find_everything_dirs(a, self.home, links=True)
+        self.assertEqual(found, [os.path.join(a, "loop-everything"),
+                                 os.path.join(a, "real-everything")])
+        self.assertTrue(discovery.is_link(found[0]))
+        self.assertFalse(discovery.is_link(found[1]))
+        # no links without the flag; the full tree adds only LinkToEverything
+        self.assertEqual(discovery.find_everything_dirs(a, self.home),
+                         [os.path.join(a, "real-everything")])
+        self.assertEqual(
+            set(discovery.find_everything_dirs(self.home, self.home, links=True))
+            - set(discovery.find_everything_dirs(self.home, self.home)),
+            {self.p("LinkToEverything"), os.path.join(a, "loop-everything")})
 
     def test_claude_projects_pruned_at_any_depth(self):
         archived = self.p("Main", "Everything", "250003-nry", "home")
@@ -217,10 +238,11 @@ class ListCommandTest(TreeTest):
         rc, out, _ = self.run_cli("list")
         self.assertEqual(rc, 0)
         self.assertEqual(out, """\
-Everything dirs under ~ (3 found, 1 nested)
+Everything dirs under ~ (4 found, 1 nested, 1 symlink)
 
   PATH                                         ENTRIES  NEWEST        SUFFIX
   ~/Archive/old_everything                           0  -             -
+  ~/LinkToEverything → ~/Main/Everything             6  260002-lnk    (none),nry,abc,gel,lnk
 * ~/Main/Everything                                  6  260002-lnk    (none),nry,abc,gel,lnk
     └ ~/Main/Everything/250001/sub-everything        1  250001-sub    sub
 
@@ -234,6 +256,20 @@ Everything dirs under ~ (3 found, 1 nested)
             self.p("Main", "Everything"),
             self.p("Main", "Everything", "250001", "sub-everything"),
         ])
+
+    def test_paths_leave_out_links(self):
+        _, out, _ = self.run_cli("list", "--paths")
+        self.assertNotIn(self.p("LinkToEverything"), out.splitlines())
+        self.assertIn(self.p("Main", "Everything"), out.splitlines())
+
+    def test_broken_and_looping_links(self):
+        os.symlink(self.p("gone"), self.p("Archive", "broken-everything"))
+        os.symlink(self.p("Archive"), self.p("Archive", "loop-everything"))
+        rc, out, err = self.run_cli("list", "--root", self.p("Archive"))
+        self.assertEqual((rc, err), (0, ""))
+        self.assertNotIn("broken", out)
+        self.assertIn("  ~/Archive/loop-everything → ~/Archive ", out)
+        self.assertIn("(2 found, 0 nested, 1 symlink)", out)
 
     def test_no_bookmark_no_marker(self):
         os.remove(self.p(".sdirs"))
@@ -301,6 +337,21 @@ class PickCommandTest(TreeTest):
         ])
         self.assertIn("--prompt=multiple matches for 'main' > ", cmd)
 
+    def test_link_offered_and_printed_as_link_path(self):
+        with mock.patch("shutil.which", side_effect=AssertionError("fzf not needed")):
+            rc, out, _ = self.run_cli("pick", "linkto")
+        self.assertEqual((rc, out), (0, self.p("LinkToEverything") + "\n"))
+        rows = []
+
+        def fake_fzf(cmd, input, **kw):
+            rows.extend(input.splitlines())
+            return subprocess.CompletedProcess(cmd, 130, stdout="")
+        with mock.patch("shutil.which", return_value="/usr/bin/fzf"), \
+                mock.patch("subprocess.run", side_effect=fake_fzf):
+            self.run_cli("pick")
+        self.assertIn("  ~/LinkToEverything → ~/Main/Everything             6  260002-lnk    "
+                      "(none),nry,abc,gel,lnk\t" + self.p("LinkToEverything"), rows)
+
     def test_no_text_single_dir_skips_fzf(self):
         with mock.patch("shutil.which", side_effect=AssertionError("fzf not needed")):
             rc, out, err = self.run_cli("pick", "--root", self.p("Archive"))
@@ -331,6 +382,17 @@ class PickCommandTest(TreeTest):
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertEqual(res.stdout.splitlines(), [
             "cde: ~/Archive/old_everything", self.p("Archive", "old_everything")])
+
+
+    def test_cde_via_link_keeps_link_path(self):
+        functions = os.path.join(REPO, "modules", "base", ".config", "dotfiles",
+                                 "functions.d", "base.sh")
+        script = f'everything() {{ "{SHIM}" "$@"; }}; source "{functions}"; cde --root "$HOME" linkto && pwd'
+        res = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                             env={**os.environ, "HOME": self.home})
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertEqual(res.stdout.splitlines(), [
+            "cde: ~/LinkToEverything", self.p("LinkToEverything")])
 
 
 class GotoCommandTest(TreeTest):
@@ -695,6 +757,15 @@ class CacheTest(TreeTest):
         dirs, age = self.find()
         self.assertIsNotNone(age)
         self.assertNotIn(self.p("Archive", "old_everything"), dirs)
+
+    def test_links_cached_but_only_returned_on_request(self):
+        dirs, _ = self.find()
+        self.assertNotIn(self.p("LinkToEverything"), dirs)
+        with mock.patch.object(discovery, "find_everything_dirs",
+                               side_effect=AssertionError("should use cache")):
+            linked, age = discovery.find_everything_dirs_cached(self.home, self.home, links=True)
+        self.assertIsNotNone(age)
+        self.assertEqual(sorted(set(linked) - set(dirs)), [self.p("LinkToEverything")])
 
     def test_separate_entry_per_root(self):
         self.find()

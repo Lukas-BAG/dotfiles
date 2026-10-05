@@ -1,4 +1,6 @@
 #!/bin/bash
+# set -e/-u only, no pipefail: head closes the /dev/urandom pipe early (SIGPIPE).
+set -eu
 
 function usage {
     echo "Timed Notification script"
@@ -8,12 +10,12 @@ function usage {
     echo "$0 <time_in_seconds_for_the_timer> <notification_to_send>"
 }
 
-if [ "$1" == "-h" ]; then
+if [ "${1:-}" == "-h" ]; then
     usage
     exit 0
 fi
 
-if [ "$1" == "--help" ]; then
+if [ "${1:-}" == "--help" ]; then
     usage
     exit 0
 fi

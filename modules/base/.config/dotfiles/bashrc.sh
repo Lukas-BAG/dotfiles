@@ -1,7 +1,5 @@
-# ~/.bashrc: executed by bash(1) for non-login shells.
-
-export EDITOR=vim
-export VISUAL=vim
+# Entry point for interactive bash, sourced from the managed block that
+# init_or_deinit_stow.py appends to ~/.bashrc.
 
 # If not running interactively, don't do anything
 case $- in
@@ -9,8 +7,9 @@ case $- in
       *) return;;
 esac
 
+# Tells profile.sh that ~/.bashrc already ran in this shell. Not exported.
+DOTFILES_BASHRC_LOADED=1
 
-####################### Imports
 for f in ~/.config/dotfiles/settings.d/*.sh; do [ -f "$f" ] && . "$f"; done
 for f in ~/.config/dotfiles/aliases.d/*.sh; do [ -f "$f" ] && . "$f"; done
 for f in ~/.config/dotfiles/functions.d/*.sh; do [ -f "$f" ] && . "$f"; done

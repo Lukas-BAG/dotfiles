@@ -1,4 +1,6 @@
 #!/bin/bash
+# No strict mode: a launcher that is missing or fails must not stop the rest
+# of the session startup.
 
 if [ -f "$HOME/.config/dotfiles/system_local/monitors.sh" ]; then
     . "$HOME/.config/dotfiles/system_local/monitors.sh"

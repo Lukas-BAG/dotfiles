@@ -1,3 +1,5 @@
+#!/bin/bash
+set -euo pipefail
 # Packages needed just to get the repo checked out and stowed.
 essential_packages=(
   git

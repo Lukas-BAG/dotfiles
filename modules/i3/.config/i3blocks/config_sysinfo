@@ -1,26 +1,25 @@
 # i3blocks config for system info bar (bottom bar)
 # CPU, memory, and date — secondary info kept separate from the main status bar.
 
-command=$SCRIPT_DIR/$BLOCK_NAME/$BLOCK_NAME
 separator_block_width=15
 markup=none
 
 
 # --- System resources ---
 
-[cpu_usage]
-label=CPU
+[cpu]
+command=$HOME/.config/i3/scripts/cpu_status.sh
 color=#FE8019
 min_width=CPU 100.00%
-interval=10
+interval=2
 separator=false
 separator_block_width=5
 
 [memory]
-label=MEM
+command=$HOME/.config/i3/scripts/memory_status.sh
 color=#83A598
 min_width=MEM 100%
-interval=30
+interval=5
 
 
 # --- Date ---

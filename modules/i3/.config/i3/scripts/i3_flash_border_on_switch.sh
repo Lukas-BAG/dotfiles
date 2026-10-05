@@ -1,4 +1,6 @@
 #!/bin/bash
+# No strict mode: long-running i3 event subscriber; a failed i3-msg or jq
+# for one event must not end the loop.
 
 # Created 18.12.2024 with the help of ChatGPT
 # but I had the exact same script somewhere else and I just cant remember where

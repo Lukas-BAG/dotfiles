@@ -1,12 +1,16 @@
-#!/bin/sh
+# Shell behaviour for interactive bash. Self-contained: it sets everything we
+# want on any system, without relying on the distro's ~/.bashrc, and is safe
+# to source repeatedly (reloadbash). Plain assignments repeat harmlessly; only
+# the completion setup is guarded.
 
 # Vi keybindings in the shell
 set -o vi
 
 
 ########## History ##########
-HISTSIZE=1000
-HISTFILESIZE=2000
+# Sizes are our choice (3x Debian's defaults), not inherited.
+HISTSIZE=3000
+HISTFILESIZE=6000
 shopt -s histappend
 
 # don't put duplicate lines or lines starting with space in the history.
@@ -17,60 +21,31 @@ shopt -s checkwinsize
 
 
 ########## Prompt ##########
-
-# set a fancy prompt (non-color, unless we know we "want" color)
-case "$TERM" in
-    xterm-color|*-256color) color_prompt=yes;;
-esac
-
-# set variable identifying the chroot you work in (used in the prompt below)
-if [ -z "${debian_chroot:-}" ] && [ -r /etc/debian_chroot ]; then
-    debian_chroot=$(cat /etc/debian_chroot)
+# user@host:dir$, coloured when the terminal supports it (checked via tput,
+# which also covers terminals whose TERM doesn't end in -256color).
+if [ "${TERM:-dumb}" != dumb ] && command -v tput >/dev/null 2>&1 \
+        && tput setaf 1 >/dev/null 2>&1; then
+    PS1='\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
+else
+    PS1='\u@\h:\w\$ '
 fi
 
-# uncomment for a colored prompt, if the terminal has the capability; turned
-# off by default to not distract the user: the focus in a terminal window
-# should be on the output of commands, not on the prompt
-#force_color_prompt=yes
-
-if [ -n "$force_color_prompt" ]; then
-    if [ -x /usr/bin/tput ] && tput setaf 1 >&/dev/null; then
-	# We have color support; assume it's compliant with Ecma-48
-	# (ISO/IEC-6429). (Lack of such support is extremely rare, and such
-	# a case would tend to support setf rather than setaf.)
-	color_prompt=yes
+# LS_COLORS for ls; honours a personal ~/.dircolors. The colour aliases
+# themselves are in aliases.d/base.sh.
+if command -v dircolors >/dev/null 2>&1; then
+    if [ -r ~/.dircolors ]; then
+        eval "$(dircolors -b ~/.dircolors)"
     else
-	color_prompt=
+        eval "$(dircolors -b)"
     fi
 fi
 
-if [ "$color_prompt" = yes ]; then
-    PS1='${debian_chroot:+($debian_chroot)}\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
-else
-    PS1='${debian_chroot:+($debian_chroot)}\u@\h:\w\$ '
-fi
-unset color_prompt force_color_prompt
 
-# If this is an xterm set the title to user@host:dir
-case "$TERM" in
-xterm*|rxvt*)
-    PS1="\[\e]0;${debian_chroot:+($debian_chroot)}\u@\h: \w\a\]$PS1"
-    ;;
-*)
-    ;;
-esac
-
-# Color support for ls and grep
-if [ -x /usr/bin/dircolors ]; then
-    test -r ~/.dircolors && eval "$(dircolors -b ~/.dircolors)" || eval "$(dircolors -b)"
-    alias ls='ls --color=auto'
-    alias grep='grep --color=auto'
-    alias fgrep='fgrep --color=auto'
-    alias egrep='egrep --color=auto'
-fi
-
-# Bash completion
-if ! shopt -oq posix; then
+########## Completion ##########
+# Loaded once: bash-completion sets BASH_COMPLETION_VERSINFO, and sourcing it
+# a second time (reloadbash, or the distro .bashrc having loaded it already)
+# would only redo the work.
+if [ -z "${BASH_COMPLETION_VERSINFO:-}" ] && ! shopt -oq posix; then
     if [ -f /usr/share/bash-completion/bash_completion ]; then
         . /usr/share/bash-completion/bash_completion
     elif [ -f /etc/bash_completion ]; then

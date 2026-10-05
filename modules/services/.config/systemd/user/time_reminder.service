@@ -3,6 +3,9 @@ Description=Notify test
 
 [Service]
 Type=oneshot
+# Skip quietly (not failed) when nothing owns the notification name on the
+# session bus, e.g. on a headless machine without a notification daemon.
+ExecCondition=/usr/bin/busctl --user status org.freedesktop.Notifications
 ExecStart=/usr/bin/bash -c 'notify-send "$(date +%%H:%%M)" " $(python3 $HOME/Main/Scripts/RAM_Script_Python/main.py random --hide-id --hide-date) (random todo)"'
 
 [Install]

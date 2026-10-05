@@ -35,7 +35,7 @@ bash Scripts/Initialization_and_Saving_State_Scripts/apt_install_programs.sh
 git submodule update --init --recursive
 ```
 
-This pulls in the nvim config, RAM monitor script, and i3blocks-contrib scripts.
+This pulls in the nvim config and the RAM monitor script.
 
 ### Guided setup (recommended)
 
@@ -59,10 +59,10 @@ glob. Once conflicts are resolved it runs the real stow setup for you.
 If you'd rather do it by hand:
 
 **Resolve conflicts first.** Stow creates symlinks from this repo into your
-home directory. If files like `~/.bashrc` or `~/.profile` already exist, stow
+home directory. If files like `~/.bash_profile` already exist, stow
 will refuse to overwrite them. You need to **remove or back up any
-conflicting files before stowing**. Common conflicts to check: `~/.bashrc`,
-`~/.bash_profile`, `~/.profile`.
+conflicting files before stowing**. Common conflicts to check: `~/.bash_profile`. (`~/.bashrc` and
+`~/.profile` are not stowed; init appends a marked block to each.)
 
 **Configure which modules to activate.** Copy the template module list and
 edit it for your machine:
@@ -106,14 +106,14 @@ See `claude_settings/README.md` for how defaults and enforced settings differ.
 
 | Module | Description |
 |---|---|
-| `base` | Core shell setup: `.bashrc`, shell settings, aliases, functions, plugins. The foundation — should always be active. |
-| `i3` | Full i3 window manager configuration including i3blocks status bar, workspace scripts, and the i3blocks-contrib scripts as a submodule. |
+| `base` | Core shell setup: `bashrc.sh` (hooked into `~/.bashrc` by a managed block), shell settings, aliases, functions, plugins, plus git/tmux/vim-style tool configs and small helper scripts. No desktop config — that is in `i3`. The foundation — should always be active. |
+| `i3` | The whole desktop/session setup: i3 configuration with the i3blocks status bar, workspace scripts and in-repo status bar blocks (volume, CPU, memory, battery), plus sway, dunst, X resources and keybindings (`.Xresources`, `.xbindkeysrc`), the custom XKB layout, startup/lock/wallpaper scripts, `myScreenshot` and the wallpaper. Leave it out on headless machines. |
 | `nvim` | Neovim configuration (submodule pointing to a separate nvim config repo). |
 | `vim` | Vim configuration for when neovim isn't available. |
 | `scripts` | Miscellaneous helper scripts (RAM monitor etc.) managed as submodules. |
 | `services` | Systemd user services. |
 | `ai` | AI tooling — Claude usage monitor script, notification hook script and shell alias (Claude settings: see `claude_settings/`). Opt-in: only activate on machines where you use Claude. |
-| `laptop_adaptations` | Laptop-specific tweaks (touchpad natural scrolling, tapping). Opt-in: activate on laptops instead of or alongside `base`. |
+| `laptop_adaptations` | Laptop-specific tweaks (touchpad natural scrolling, tapping). Opt-in: activate on laptops alongside `base` (and `i3` on a laptop desktop). |
 
 ### Module conventions
 
@@ -128,14 +128,14 @@ Shell aliases, functions, and plugin/tool integrations that are module-specific 
   system_local/   # machine-specific overrides (not tracked in git)
 ```
 
-These directories are glob-sourced by `.bashrc` at shell startup. If a module isn't stowed, its file doesn't exist and nothing is loaded — no conditionals needed.
+These directories are glob-sourced by `~/.config/dotfiles/bashrc.sh` (which a managed block in your own `~/.bashrc` sources) at shell startup. If a module isn't stowed, its file doesn't exist and nothing is loaded — no conditionals needed.
 
 ### Machine-specific config
 
 For tooling that is local to a single machine and should not be tracked in git (e.g. nvm, conda, company-specific paths), the init script automatically creates these files on first run if they don't exist:
 
 ```
-~/.config/dotfiles/system_local/bashrc.sh      # sourced by .bashrc at startup
+~/.config/dotfiles/system_local/bashrc.sh      # sourced by bashrc.sh at startup
 ~/.config/dotfiles/system_local/i3_config_addon # included by i3 config at startup
 ```
 

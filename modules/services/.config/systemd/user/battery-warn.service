@@ -3,6 +3,9 @@ Description=Warn when the battery is low
 
 [Service]
 Type=oneshot
+# Skip quietly (not failed) when nothing owns the notification name on the
+# session bus, e.g. on a headless machine without a notification daemon.
+ExecCondition=/usr/bin/busctl --user status org.freedesktop.Notifications
 ExecStart=%h/.local/bin/battery-warn
 # Overrides (defaults shown):
 # Environment=BATTERY_WARN_LOW=15 BATTERY_WARN_CRITICAL=5 BATTERY_WARN_REPEAT=180

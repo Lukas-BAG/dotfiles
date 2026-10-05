@@ -1,9 +1,9 @@
 #!/bin/bash
+set -euo pipefail
 # Script to switch workspace order around
 # so workspace 20 would become 22 and workspace 22 would become workspace 20 in turn
 
 current_workspace=$(i3-msg -t get_workspaces | jq '.[] | select(.focused==true).name | .[0:1]' | tr -d '"')
-current_workspace_full=$(i3-msg -t get_workspaces | jq '.[] | select(.focused==true).name' | tr -d '"')
 
 
 

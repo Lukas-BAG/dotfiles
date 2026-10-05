@@ -1,10 +1,6 @@
 # i3blocks config
 #
-# Each block command defaults to $SCRIPT_DIR/$BLOCK_NAME/$BLOCK_NAME.
-# SCRIPT_DIR is set by the bar command in the i3 config:
-#   status_command SCRIPT_DIR=~/.config/i3blocks/scripts i3blocks -c ~/.config/i3blocks/config
-
-command=$SCRIPT_DIR/$BLOCK_NAME/$BLOCK_NAME
+# Every block names its command explicitly; scripts live in ~/.config/i3/scripts.
 separator_block_width=15
 markup=none
 
@@ -24,12 +20,12 @@ color=#928374
 label=
 command=date '+%H:%M'
 color=#EBDBB2
-interval=60
+interval=5
 
 
 # --- Audio ---
 
-[volume-pipewire]
+[volume]
 command=$HOME/.config/i3/scripts/volume_status.sh
 markup=pango
 interval=persist
@@ -40,7 +36,8 @@ color=#B8BB26
 
 [battery]
 command=$HOME/.config/i3/scripts/battery_status.sh
-interval=30
+markup=pango
+interval=2
 
 
 # --- Network (uncomment if needed) ---

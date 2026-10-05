@@ -1,4 +1,6 @@
 #!/bin/bash
+# No strict mode: every probe is best effort (grep on top output, optional
+# claude usage); a failing one must not suppress the notification.
 cpu=$(top -bn1 | grep "Cpu(s)" | awk '{print 100 - $8}')
 ram=$(free -h | awk '/^Mem:/ {print $3 "/" $2}')
 disk=$(df -h / | awk 'NR==2 {print $3 "/" $2 " (" $5 " used)"}')

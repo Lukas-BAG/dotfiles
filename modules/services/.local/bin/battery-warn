@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# No strict mode: tolerates missing or unreadable sysfs files (read ... || continue)
+# and must keep going when notify-send fails.
 # Low-battery warnings via desktop notifications. Run every minute by
 # battery-warn.timer (see ~/.config/systemd/user/).
 #

@@ -1,4 +1,6 @@
 #!/bin/bash
+# No strict mode: long-running i3 event subscriber; a failed i3-msg for one
+# event must not end the loop.
 
 # make a border appear briefly whenever the focussed window changes
 # written by ChatGPT (at least the listener. The idea and the part that is executed came from me)

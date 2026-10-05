@@ -1,14 +1,12 @@
-"""Find every Everything dir on the system.
+"""Find Everything dirs on the system (only `everything scan` does this).
 
 An Everything dir is any dir whose name contains "everything" (any case),
-matching the Everything-like-dir convention, whether or not it has entries.
+matching the Everything-like-dir convention, whether or not it has entries,
+or a dir the user marked (see saved_locations.py).
 """
 
-import json
 import os
 import re
-import tempfile
-import time
 
 # pruned wherever they appear: neither listed nor descended into
 SKIP_NAMES = {".git", "node_modules", ".cache", "site-packages", "dist-packages"}
@@ -78,11 +76,16 @@ def is_everything_name(name: str) -> bool:
     return "everything" in name.casefold()
 
 
-def enclosing_everything_dir(path: str) -> str | None:
-    """The nearest of `path` and its ancestors that is an Everything dir, or None."""
+def enclosing_everything_dir(path: str, marked: list[str] | None = None) -> str | None:
+    """The nearest of `path` and its ancestors that is an Everything dir, or None.
+
+    A dir counts if its name contains "everything" or if it is one of the
+    `marked` dirs (saved_locations.load(); compared by real path).
+    """
     path = os.path.abspath(path)
+    marked_real = {os.path.realpath(m) for m in marked or []}
     while True:
-        if is_everything_name(os.path.basename(path)):
+        if is_everything_name(os.path.basename(path)) or os.path.realpath(path) in marked_real:
             return path
         parent = os.path.dirname(path)
         if parent == path:
@@ -158,83 +161,6 @@ def drop_duplicate_links(dirs: list[str]) -> list[str]:
             seen.add(target)
         kept.append(d)
     return kept
-
-
-# Global switch for the cache below. Off for now: searching ~ is fast enough on
-# current machines, and a stale cache hides new Everything dirs. With it off,
-# nothing is read or written and --fresh is accepted but does nothing.
-CACHE_ENABLED = False
-# Everything dirs are rarely created, so a search result this old is still good
-CACHE_TTL = 6 * 60 * 60
-# part of the cache key: bump when discovery rules change, so old results aren't reused
-CACHE_VERSION = 3
-
-
-def cache_file(home: str | None = None) -> str:
-    home = home if home is not None else os.path.expanduser("~")
-    return os.path.join(home, ".cache", "dotfiles", "everything-dirs.json")
-
-
-def _read_cache(path: str) -> dict:
-    try:
-        with open(path) as f:
-            data = json.load(f)
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def _write_cache(path: str, data: dict) -> None:
-    """Atomically replace the cache file (temp file + rename). Failures are ignored."""
-    try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".everything-dirs.")
-        try:
-            with os.fdopen(fd, "w") as f:
-                json.dump(data, f, indent=1)
-            os.replace(tmp, path)
-        except BaseException:
-            os.unlink(tmp)
-            raise
-    except OSError:
-        pass
-
-
-def find_everything_dirs_cached(root: str, home: str | None = None, fresh: bool = False,
-                                network: bool = False,
-                                links: bool = False) -> tuple[list[str], float | None]:
-    """find_everything_dirs() through a cache in ~/.cache/dotfiles/.
-
-    Returns (dirs, age): age is the cache entry's age in seconds, or None if
-    a new search ran (and was written back). There is one entry per set of
-    search options; entries older than CACHE_TTL are ignored, as is the whole
-    cache with `fresh`. With CACHE_ENABLED off this is a plain search. Cached dirs that no longer exist are left out. The
-    cache always holds symlinked dirs too; they are dropped unless `links`. The
-    cache file is the only thing written.
-    """
-    home = home if home is not None else os.path.expanduser("~")
-    if not CACHE_ENABLED:
-        return find_everything_dirs(root, home, network, links=links), None
-    root = os.path.normpath(root)
-    path = cache_file(home)
-    key = json.dumps({"v": CACHE_VERSION, "root": root, "network": network}, sort_keys=True)
-    data = _read_cache(path)
-    now = time.time()
-
-    entry = data.get(key)
-    if not fresh and isinstance(entry, dict):
-        try:
-            age = now - float(entry["time"])
-            dirs = [d for d in entry["dirs"] if isinstance(d, str)]
-        except (KeyError, TypeError, ValueError):
-            age = None
-        if age is not None and 0 <= age < CACHE_TTL:
-            return [d for d in dirs if os.path.isdir(d) and (links or not is_link(d))], age
-
-    dirs = find_everything_dirs(root, home, network, links=True)
-    data[key] = {"time": now, "dirs": dirs}
-    _write_cache(path, data)
-    return [d for d in dirs if links or not is_link(d)], None
 
 
 def bookmark_dir(sdirs: str | None = None) -> str | None:

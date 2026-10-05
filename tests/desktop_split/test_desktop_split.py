@@ -23,8 +23,8 @@ DESKTOP_PATHS = [
     "Main/Scripts/Helper_Scripts/set_background.sh",
     "Main/Data/pexels-dids-3306986.jpg",
     ".local/share/applications/startup_script_with_programs.desktop",
-    ".local/bin/myScreenshot",
 ]
+
 
 
 class DesktopSplitTest(unittest.TestCase):
@@ -53,6 +53,12 @@ class DesktopSplitTest(unittest.TestCase):
         self.assertNotIn("claudeUsage", ai)
         for module, name in (("i3", "i3.sh"), ("base", "base.sh")):
             self.assertNotIn("claude", read(module, name).lower())
+
+    def test_myscreenshot_lives_in_base(self):
+        # WSL tool (Windows Snipping Tool), so it must not need the i3 module.
+        rel = ".local/bin/myScreenshot"
+        self.assertTrue(os.path.exists(os.path.join(MODULES, "base", rel)))
+        self.assertFalse(os.path.lexists(os.path.join(MODULES, "i3", rel)))
 
     def test_i3_keeps_dirs_it_shares_non_folding(self):
         for d in ("~/.local/bin", "~/.local/share/applications",

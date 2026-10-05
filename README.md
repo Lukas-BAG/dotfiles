@@ -106,8 +106,8 @@ See `claude_settings/README.md` for how defaults and enforced settings differ.
 
 | Module | Description |
 |---|---|
-| `base` | Core shell setup: `bashrc.sh` (hooked into `~/.bashrc` by a managed block), shell settings, aliases, functions, plugins, plus git/tmux/vim-style tool configs and small helper scripts. No desktop config — that is in `i3`. The foundation — should always be active. |
-| `i3` | The whole desktop/session setup: i3 configuration with the i3blocks status bar, workspace scripts and in-repo status bar blocks (volume, CPU, memory, battery), plus sway, dunst, X resources and keybindings (`.Xresources`, `.xbindkeysrc`), the custom XKB layout, startup/lock/wallpaper scripts, `myScreenshot` and the wallpaper. Leave it out on headless machines. |
+| `base` | Core shell setup: `bashrc.sh` (hooked into `~/.bashrc` by a managed block), shell settings, aliases, functions, plugins, plus git/tmux/vim-style tool configs and small helper scripts (including `myScreenshot`, the WSL screenshot tool). No desktop config — that is in `i3`. The foundation — should always be active. |
+| `i3` | The whole desktop/session setup: i3 configuration with the i3blocks status bar, workspace scripts and in-repo status bar blocks (volume, CPU, memory, battery), plus sway, dunst, X resources and keybindings (`.Xresources`, `.xbindkeysrc`), the custom XKB layout, startup/lock/wallpaper scripts and the wallpaper. Leave it out on headless machines. |
 | `nvim` | Neovim configuration (submodule pointing to a separate nvim config repo). |
 | `vim` | Vim configuration for when neovim isn't available. |
 | `scripts` | Miscellaneous helper scripts (RAM monitor etc.) managed as submodules. |

@@ -18,7 +18,7 @@ from dataclasses import dataclass
 
 from . import entries
 
-MAX_LEN = 80  # of the editable part, i.e. without the entry id and the extension
+MAX_LEN = 120  # of the editable part, i.e. without the entry id and the extension
 ALLOWED_RE = re.compile(r"[A-Za-z0-9_@]*")
 COMMENT_HELP = [
     "# Edit the sidecar name: description and tags, without the entry id and",

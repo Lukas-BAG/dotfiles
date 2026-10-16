@@ -6,6 +6,9 @@
 # Vi keybindings in the shell
 set -o vi
 
+# Typing a bare directory name (e.g. `..`) cds into it
+shopt -s autocd
+
 
 ########## History ##########
 # Sizes are our choice (3x Debian's defaults), not inherited.

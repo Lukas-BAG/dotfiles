@@ -1153,6 +1153,28 @@ class NewCommandTest(TreeTest):
         self.assertIn("highest entry '270001' is from a later year than this one ('26')", err)
         self.assertEqual(self.names(), [".mynew-suffix", "260001", "270001"])
 
+    def test_tags_inside_the_description(self):
+        self.suffix_file("nry")
+        rc, _, _ = self.run_new("test_name_@tag1_@tag2")
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.names(), [".mynew-suffix", "260001-nry",
+                                        "260001-nry_test_name_@tag1_@tag2.md"])
+
+    def test_separate_tags_come_after_parsed_ones(self):
+        self.suffix_file("nry")
+        rc, _, _ = self.run_new("Test Name_@a", "@b", "c")
+        self.assertEqual(rc, 0)
+        self.assertIn("260001-nry_test_name_@a_@b_@c.md", self.names())
+
+    def test_malformed_tags_inside_the_description_refused(self):
+        self.suffix_file("nry")
+        for arg, bad in [("test_@", "''"), ("test_@a_@", "''"), ("test_@a b", "'a b'"),
+                         ("test_@a/b", "'a/b'"), ("test_@a.b_@c", "'a.b'")]:
+            rc, out, err = self.run_new(arg)
+            self.assertEqual((rc, out), (1, ""), arg)
+            self.assertIn(f"invalid tag '@{bad[1:-1]}'", err, arg)
+        self.assertEqual(self.names(), [".mynew-suffix"])
+
     def test_no_ids_left(self):
         self.mk("269999")
         self.suffix_file("")
@@ -1162,31 +1184,30 @@ class NewCommandTest(TreeTest):
 
     run_bash = GotoCommandTest.run_bash
 
-    def test_mynew_asks_and_changes_dir(self):
+    def test_everything_new_asks_and_changes_dir(self):
         year = time.strftime("%y")  # subprocess: the real year
         self.mk(f"{year}0005-abc")
         res = subprocess.run(
             ["bash", "-c",
-             f'source "{self.functions()}"; everything() {{ "{SHIM}" "$@"; }}; '
-             'mynew "Hello World" ai && pwd'],
-            input="nry\n", capture_output=True, text=True, cwd=self.ev,
-            env={**os.environ, "HOME": self.home})
+             f'source "{self.functions()}"; '
+             'everything new "Hello World" ai && pwd'],
+            input="nry\n", capture_output=True, text=True, cwd=self.ev, env=self.shell_env())
         entry = f"{year}0006-nry"
         self.assertEqual((res.returncode, res.stdout), (0, os.path.join(self.ev, entry) + "\n"),
                          res.stderr)
         self.assertIn("Suffix to use for new entries here", res.stderr)
-        self.assertTrue(res.stderr.endswith(f"mynew: created '{entry}/' with sidecar "
+        self.assertTrue(res.stderr.endswith(f"everything new: created '{entry}/' with sidecar "
                                             f"'{entry}_hello_world_@ai.md'\n"))
 
-    def test_mynew_failure_stays_put(self):
+    def test_everything_new_failure_stays_put(self):
         open(os.path.join(self.ev, "notes.txt"), "w").close()
-        res = self.run_bash("mynew x; echo $?; pwd", cwd=self.ev)
+        res = self.run_bash("everything new x; echo $?; pwd", cwd=self.ev)
         self.assertEqual(res.stdout.splitlines(), ["1", self.ev])
-        self.assertIn("mynew: 'Everything' has no <yy><seq>[-suffix] entries but contains "
+        self.assertIn("everything new: 'Everything' has no <yy><seq>[-suffix] entries but contains "
                       "other files (1 item)", res.stderr)
-        res = self.run_bash("mynew; echo $?")
-        self.assertEqual((res.stdout, res.stderr),
-                         ("1\n", "mynew: 1 argument required, description (plus optional tags)\n"))
+        res = self.run_bash("everything new; echo $?")
+        self.assertEqual(res.stdout, "2\n")
+        self.assertIn("the following arguments are required: description", res.stderr)
 
     # starting a new Everything dir (ticket 025)
 
@@ -1336,19 +1357,29 @@ class NewCommandTest(TreeTest):
         self.assertIn("not allowed with", err.getvalue())
         self.assertEqual(self.names(), [])
 
-    def test_mynew_in_empty_dir_from_shell(self):
+    def test_everything_new_in_empty_dir_from_shell(self):
         self.devbox("nry\n")
         res = subprocess.run(
-            ["bash", "-c", f'source "{self.functions()}"; everything() {{ "{SHIM}" "$@"; }}; '
-             'mynew "Hello" && pwd'],
+            ["bash", "-c", f'source "{self.functions()}"; '
+             'everything new "Hello" && pwd'],
             capture_output=True, text=True, cwd=self.ev, stdin=subprocess.DEVNULL,
-            env={**os.environ, "HOME": self.home})
+            env=self.shell_env())
         year = time.strftime("%y")
         self.assertEqual((res.returncode, res.stdout),
                          (0, os.path.join(self.ev, f"{year}0001-nry") + "\n"), res.stderr)
 
     def functions(self):
         return os.path.join(REPO, "modules", "base", ".config", "dotfiles", "functions.d", "base.sh")
+
+    def shell_env(self):
+        """HOME plus a PATH where `everything` is the repo's command, which the shell
+        function `everything` calls (so its cd is what gets tested)."""
+        bin_dir = self.p("shellbin")
+        os.makedirs(bin_dir, exist_ok=True)
+        if not os.path.lexists(os.path.join(bin_dir, "everything")):
+            os.symlink(SHIM, os.path.join(bin_dir, "everything"))
+        return {**os.environ, "HOME": self.home,
+                "PATH": bin_dir + os.pathsep + os.environ["PATH"]}
 
 
 def shell_definitions():
@@ -1848,7 +1879,7 @@ class RenameCommandTest(TreeTest):
             ("trail_", "leading, trailing or doubled _"), ("a__b", "leading, trailing or doubled _"),
             ("a_@", "malformed tag"), ("a_@@x", "malformed tag"), ("a_b@c", "malformed tag"),
             ("@ai_desc", "start with a description"), ("a_@ai_more", "put all tags last"),
-            ("x" * 81, "81 characters, at most 80"), ("other", None),
+            ("x" * (rename.MAX_LEN + 1), f"{rename.MAX_LEN + 1} characters, at most {rename.MAX_LEN}"), ("other", None),
         ]
         for text, message in cases[:-1]:
             # first edit is rejected, the second saves the same text again: cancelled
@@ -1867,9 +1898,12 @@ class RenameCommandTest(TreeTest):
         self.assertIn("260005-nry_good_name.md", os.listdir(self.ev))
 
     def test_max_length_is_accepted(self):
-        rc, _, _ = self.run_rename("x" * 80)
+        self.assertEqual(rename.MAX_LEN, 120)
+        rc, _, _ = self.run_rename("x" * 120)
         self.assertEqual(rc, 0)
-        self.assertIn("260005-nry_" + "x" * 80 + ".md", os.listdir(self.ev))
+        name = "260005-nry_" + "x" * 120 + ".md"
+        self.assertIn(name, os.listdir(self.ev))
+        self.assertLess(len(name.encode()), 255)
 
     def test_existing_target_is_rejected_and_never_overwritten(self):
         # a dir (or dangling symlink) with that name isn't a sidecar, but blocks the name
@@ -2414,7 +2448,7 @@ class HelpCommandTest(unittest.TestCase):
     def test_every_shell_wrapper_listed(self):
         wrappers = everything_wrappers()
         # guards the parser above: these must be found, or the check is toothless
-        self.assertLessEqual({"ge", "gel", "cde", "lse", "mynew"}, wrappers)
+        self.assertLessEqual({"ge", "gel", "cde", "lse", "everything"}, wrappers)
         self.assertEqual(sorted(self.overview_names(1)), sorted(wrappers))
 
 

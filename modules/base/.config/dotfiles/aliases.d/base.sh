@@ -1,6 +1,8 @@
 #!/bin/sh
 
 alias ..='cd ..'
+alias ...='cd ../..'
+alias ....='cd ../../..'
 alias cds='cds() { cd "$1" && ls; }; cds'
 alias reloadbash="source ~/.bashrc"
 alias :r=reloadbash
@@ -36,3 +38,4 @@ if echo x | grep --color=auto -q x >/dev/null 2>&1; then
 fi
 
 alias lse='everything entries'  # list the entries of the Everything dir you're in, see ~/.local/bin/everything
+alias e=everything  # short for the everything command (the `e` bashmark is a separate thing)

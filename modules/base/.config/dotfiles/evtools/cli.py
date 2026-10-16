@@ -426,7 +426,7 @@ def cmd_check(args: argparse.Namespace) -> int:
 
 
 def _ask_suffix(prog: str, d: str) -> str:
-    # everything but the new path goes to stderr: mynew runs this in $(...)
+    # everything but the new path goes to stderr: the shell function runs this in $(...)
     print(f"{prog}: no suffix configured for {d} yet.", file=sys.stderr)
     print("Suffix to use for new entries here (leave blank for none): ",
           end="", file=sys.stderr, flush=True)
@@ -460,7 +460,7 @@ def _pick_suffix(args: argparse.Namespace, prog: str, d: str) -> tuple[str, str 
 
 
 def cmd_new(args: argparse.Namespace) -> int:
-    """Create the next entry dir + sidecar and print its path, for mynew to cd into."""
+    """Create the next entry dir + sidecar and print its path, for the shell function to cd into."""
     prog = args.label
     d = os.path.abspath(args.dir)
     if not os.path.isdir(d):
@@ -488,7 +488,7 @@ def cmd_new(args: argparse.Namespace) -> int:
         print(f"{prog}: year prefix rolled over (highest existing entry is '{p.rolled_over}', "
               f"current year is '{p.entry[:2]}') - starting sequence over at 0001",
               file=sys.stderr)
-    words = new.snake(args.description).split("_")
+    words = new.snake(new.split_tags(args.description, args.tags)[0]).split("_")
     if len(words) > 1 and check.SHORT_WORD_RE.match(words[-1]):
         print(f"{prog}: note: description ends in \"_{words[-1]}\", did you mean tag "
               f"@{words[-1]}? (tags go after the quoted description)", file=sys.stderr)
@@ -781,10 +781,9 @@ OVERVIEW = [
         ("gel", "like ge, but searches the current dir", "gel fire"),
         ("cde", "cd to one Everything dir, via text match or fzf", "cde archive"),
         ("lse", "alias for `everything entries`", "lse -a"),
-        ("everything", "the command itself; `everything remove` also cds to the parent dir",
-         "everything remove"),
-        ("mynew", "create the next entry in the current Everything dir and cd into it",
-         "mynew \"some idea\" ai"),
+        ("e", "alias for `everything` (not the \"e\" bashmark)", "e list   e new \"some idea\""),
+        ("everything", "the command itself; `everything new` also cds into the new entry and "
+         "`everything remove` to the parent dir", "everything new \"some idea\" ai"),
     ]),
 ]
 
@@ -904,7 +903,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="print JSON instead of text")
     p.set_defaults(func=cmd_check)
 
-    p = sub.add_parser("new", help="create the next entry dir + sidecar (used by mynew)",
+    p = sub.add_parser("new", help="create the next entry dir + sidecar (the shell function also cds there)",
                        description="Create the next \"<yy><seq>[-suffix]\" entry dir in an "
                        "Everything dir (the current dir by default) plus its empty sidecar "
                        "\"<entry>_<description>[_@tag...].md\", and print the new dir's "
@@ -914,9 +913,11 @@ def build_parser() -> argparse.ArgumentParser:
                        "needs --yes); a dir with other files but no entries is refused. The "
                        "suffix is the one in the dir's \".mynew-suffix\", else the content of "
                        "~/.devbox_id, else it is asked once; the one used is saved in "
-                       "\".mynew-suffix\". Never overwrites an entry or sidecar. mynew wraps "
-                       "this to cd there.")
-    p.add_argument("description", help="free text, turned into lower_snake_case")
+                       "\".mynew-suffix\". Never overwrites an entry or sidecar. The shell function "
+                       "`everything` then cds there. The description may carry the tags too: "
+                       "\"name_@tag1_@tag2\".")
+    p.add_argument("description", help="free text, turned into lower_snake_case; "
+                   "\"name_@tag1_@tag2\" also sets tags")
     p.add_argument("tags", nargs="*", metavar="tag", help="tags, with or without a leading @")
     p.add_argument("--dir", default=".", help="the Everything dir (default: current dir)")
     which = p.add_mutually_exclusive_group()
@@ -998,7 +999,7 @@ def build_parser() -> argparse.ArgumentParser:
                        "(default vim) on the part of the sidecar name after the entry id "
                        "and before the extension, e.g. \"working_on_dotfiles_@ai\", and "
                        "rename the sidecar to the edited text. The name is checked first "
-                       "(letters, digits, _ and _@tags, at most 80 characters, no existing "
+                       f"(letters, digits, _ and _@tags, at most {rename.MAX_LEN} characters, no existing "
                        "file); on a problem the editor reopens with the error shown. An "
                        "editor error (:cq), an empty line or no change renames nothing and "
                        "exits 1.")

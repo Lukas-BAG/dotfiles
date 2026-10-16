@@ -1,4 +1,4 @@
-"""Create the next entry in an Everything dir (what mynew does).
+"""Create the next entry in an Everything dir (`everything new`).
 
 The new entry is the dir "<yy><seq>[-suffix]" plus an empty sidecar
 "<entry>_<description>[_@tag...].md" next to it (see entries.py). seq is one
@@ -44,6 +44,25 @@ def current_year() -> str:
 def snake(description: str) -> str:
     """"Fire Drill (v2)!" -> "fire_drill_v2", as mynew always did."""
     return re.sub(r"[^a-z0-9]+", "_", description.lower()).strip("_")
+
+
+TAG_RE = re.compile(r"[A-Za-z0-9-]+")  # a tag written inside the description argument
+
+
+def split_tags(description: str, tags: list[str]) -> tuple[str, list[str]]:
+    """"fire_drill_@ai_@ops" + ["x"] -> ("fire_drill", ["ai", "ops", "x"]).
+
+    Only an argument containing "_@" is split, so plain descriptions are left alone;
+    tags given as separate arguments come after the parsed ones.
+    """
+    if "_@" not in description:
+        return description, tags
+    description, *parsed = description.split("_@")
+    for t in parsed:
+        if not TAG_RE.fullmatch(t):
+            raise Refusal(f"invalid tag '@{t}' in the description, a tag may only be letters, "
+                          "digits and '-' (write it as name_@tag1_@tag2), refusing")
+    return description, parsed + list(tags)
 
 
 def read_suffix(everything_dir: str) -> str | None:
@@ -109,6 +128,7 @@ def plan(everything_dir: str, description: str, tags: list[str], suffix: str,
                           "entry by hand")
         seq = 1  # a new, empty Everything dir
 
+    description, tags = split_tags(description, tags)
     words = snake(description)
     if not words:
         raise Refusal("description has no letters or digits, refusing")

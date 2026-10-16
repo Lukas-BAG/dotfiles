@@ -4,6 +4,16 @@
 ###################### Most useful things ######################
 
 
+# Go up N directories (default 1): `up 3` is `cd ../../..`
+up() {
+  local path="" i
+  for ((i = 0; i < ${1:-1}; i++)); do
+    path+="../"
+  done
+  cd "$path"
+}
+
+
 # Fuzzy-pick a bashmark (from ~/.sdirs) and open nvim there
 proj() {
   if [ "$#" -ge 2 ]; then
@@ -435,41 +445,27 @@ PYEOF
 
 ########################################################
 
-# Quick-create the next numbered location in an "Everything" dir
-# (~/Main/Everything/-style: entries named "<yy><seq>[-<suffix>]" plus a
+# `everything` itself is a function so that `everything new` and `everything
+# remove` can change the shell's dir: `new` creates the next entry and prints its
+# path (see below), `remove` deletes the entry you're in and prints the parent
+# dir. A subprocess can't cd for the shell, so this does it with that output.
+# Everything else is passed straight through to the command
+# (~/.local/bin/everything).
+#
+# `everything new` quick-creates the next numbered location in an "Everything"
+# dir (~/Main/Everything/-style: entries named "<yy><seq>[-<suffix>]" plus a
 # matching empty sidecar file "<entry>_<snake_case_description>[_@tag...].md",
-# see _ge_sidecar_candidates() below for the sidecar-file convention).
+# see duh() above). Run it from inside an Everything dir; an empty dir starts a
+# new one (asking first if its name has no "everything" in it; --yes skips that).
+# The suffix is the one in the dir's hidden ".mynew-suffix", else ~/.devbox_id,
+# else asked once; the one used is saved there. --suffix S: this entry only;
+# --ask-suffix: ask and replace.
 #
-# Run from inside an Everything dir; an empty dir starts a new one (asking first
-# if its name has no "everything" in it; --yes skips that). The suffix is the one
-# in the dir's hidden ".mynew-suffix", else ~/.devbox_id, else asked once; the
-# one used is saved there. --suffix S: this entry only; --ask-suffix: ask and replace.
-# The work is done by `everything new` (see ~/.local/bin/everything); this
-# only does the cd, which a subprocess can't do for the shell.
-#
-# Usage: mynew "description" [tag ...] [--suffix S | --ask-suffix] [--yes]
-#   tags may be passed with or without a leading "@" (e.g. "ai" or "@ai").
-mynew() {
-    local dir
-    if [ "$#" -lt 1 ]; then
-        echo "mynew: 1 argument required, description (plus optional tags)" >&2
-        return 1
-    fi
-    dir=$(everything new --label mynew "$@") || return
-    if [ -d "$dir" ]; then
-        cd -- "$dir"
-    else
-        printf '%s\n' "$dir"  # e.g. --help output
-    fi
-}
-
-
-# `everything` itself is a function so that `everything remove` can end in the
-# Everything dir: the command deletes the entry you're in and prints the parent
-# dir, which a subprocess can't cd into for the shell. Everything else is passed
-# straight through to the command (~/.local/bin/everything).
+# Usage: everything new "description" [tag ...] [--suffix S | --ask-suffix] [--yes]
+#   tags may be passed with or without a leading "@" (e.g. "ai" or "@ai"), or
+#   inside the description: everything new "some idea_@ai_@ops"
 everything() {
-    if [ "$1" != remove ]; then
+    if [ "$1" != remove ] && [ "$1" != new ]; then
         command everything "$@"
         return
     fi
